@@ -1,9 +1,10 @@
-from flask import Flask, jsonify, request, send_from_directory
+from flask import Flask, jsonify, request, send_from_directory, Response
 from flask_cors import CORS
 import os
 import json
 import threading
 import shutil
+import time
 from pathlib import Path
 from metadata_extractor import process_all_audiobooks, process_specific_folders
 from polling_watcher import start_file_watcher_safe
@@ -15,6 +16,24 @@ from config import MEDIA_ROOT, DEST_ROOT, METADATA_DIR, COVERS_DIR, STATUS_OPTIO
 app = Flask(__name__)
 CORS(app)  # Enable CORS for frontend communication
 
+# Global change notification system
+change_events = []
+change_event_lock = threading.Lock()
+
+def notify_change(event_type, message, data=None):
+    """Add a change event to the notification queue"""
+    print(f"[SSE] Notifying change: {event_type} - {message}")
+    with change_event_lock:
+        change_events.append({
+            'type': event_type,
+            'message': message,
+            'data': data or {},
+            'timestamp': time.time()
+        })
+        # Keep only last 100 events
+        if len(change_events) > 100:
+            change_events.pop(0)
+
 # Ensure directories exist
 METADATA_DIR.mkdir(exist_ok=True)
 COVERS_DIR.mkdir(exist_ok=True)
@@ -22,6 +41,29 @@ COVERS_DIR.mkdir(exist_ok=True)
 # Initialize tracker and Audible service
 tracker = AudiobookTracker(METADATA_DIR, COVERS_DIR, MEDIA_ROOT)
 audible_service = AudibleSearchService(COVERS_DIR)
+
+@app.route('/api/events')
+def stream_events():
+    """Server-Sent Events endpoint for real-time updates"""
+    def event_stream():
+        last_seen = 0
+        while True:
+            try:
+                with change_event_lock:
+                    # Send any new events
+                    for i, event in enumerate(change_events[last_seen:], last_seen):
+                        yield f"data: {json.dumps(event)}\n\n"
+                        last_seen = i + 1
+                
+                time.sleep(1)  # Check for new events every second
+            except GeneratorExit:
+                break
+            except Exception as e:
+                print(f"[SSE] Error in event stream: {e}")
+                break
+    
+    return Response(event_stream(), mimetype='text/event-stream', 
+                   headers={'Cache-Control': 'no-cache', 'Connection': 'keep-alive'})
 
 # Root endpoint for API info
 @app.route('/')
@@ -132,6 +174,13 @@ def update_status_by_uuid(uuid_str):
         with open(metadata_file, 'w', encoding='utf-8') as f:
             json.dump(metadata, f, indent=2, ensure_ascii=False)
         
+        # Notify frontend of status change
+        notify_change('status_update', f"Status updated to '{status}'", {
+            'uuid': uuid_str,
+            'status': status,
+            'title': metadata.get('original', {}).get('title', 'Unknown')
+        })
+        
         return jsonify({'success': True})
     
     except Exception as e:
@@ -160,6 +209,14 @@ def scan_library():
         
         # Update tracking summary after scan
         tracker.update_tracking_after_scan(count)
+        
+        # Notify frontend of scan completion
+        if count > 0:
+            notify_change('scan_complete', f"Scan completed: {count} audiobooks processed", {
+                'count': count,
+                'full_scan': force_full_scan
+            })
+        
         return jsonify({'success': True, 'count': count, 'full_scan': force_full_scan})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
@@ -696,6 +753,13 @@ def purge_and_regenerate():
             tracker.update_tracking_after_scan(count)
             print(f"[PURGE] Regenerated {count} audiobooks")
             
+            # Notify frontend of purge completion
+            notify_change('purge_complete', f"Purge complete: {count} audiobooks regenerated", {
+                'deleted_metadata': deleted_metadata,
+                'deleted_covers': deleted_covers,
+                'regenerated': count
+            })
+            
             return jsonify({
                 'success': True,
                 'message': f'Purge complete. Deleted {deleted_metadata} metadata files and {deleted_covers} covers. Regenerated {count} audiobooks.',
@@ -767,6 +831,7 @@ def organize_audiobooks():
         
         # Process each accepted audiobook
         source_folders_to_check = set()
+        successfully_organized = []  # Track audiobooks that were successfully moved
         
         for audiobook_data in accepted_audiobooks:
             try:
@@ -788,6 +853,10 @@ def organize_audiobooks():
                 dest_base = Path(destination)
                 dest_base.mkdir(parents=True, exist_ok=True)
                 
+                # Track files successfully moved for this audiobook
+                files_moved_successfully = 0
+                total_files = len(original_paths)
+                
                 # Copy/move each file
                 for orig_path, org_path in zip(original_paths, organized_paths):
                     try:
@@ -804,9 +873,11 @@ def organize_audiobooks():
                             if copy_only:
                                 shutil.copy2(source_file, dest_file)
                                 print(f"[ORGANIZE] Copied: {orig_path} -> {org_path}")
+                                files_moved_successfully += 1
                             else:
                                 shutil.move(str(source_file), str(dest_file))
                                 print(f"[ORGANIZE] Moved: {orig_path} -> {org_path}")
+                                files_moved_successfully += 1
                         else:
                             print(f"[ORGANIZE] Warning: Source file not found: {source_file}")
                             error_count += 1
@@ -814,6 +885,10 @@ def organize_audiobooks():
                     except Exception as e:
                         print(f"[ORGANIZE] Error processing file {orig_path}: {e}")
                         error_count += 1
+                
+                # If all files were successfully moved (not copied), mark for metadata cleanup
+                if not copy_only and files_moved_successfully == total_files:
+                    successfully_organized.append(audiobook_data)
                 
                 processed_count += 1
                 
@@ -824,7 +899,19 @@ def organize_audiobooks():
         # Clean up empty source folders if requested
         cleaned_folders = 0
         if cleanup_empty_folders:
+            # Create a list of all folders to check, including parent directories
+            all_folders_to_check = set()
             for folder in source_folders_to_check:
+                current = folder
+                # Add current folder and all parent folders up to MEDIA_ROOT
+                while current and current != Path(MEDIA_ROOT) and current != current.parent:
+                    all_folders_to_check.add(current)
+                    current = current.parent
+            
+            # Sort folders by depth (deepest first) to clean up from bottom to top
+            sorted_folders = sorted(all_folders_to_check, key=lambda x: len(x.parts), reverse=True)
+            
+            for folder in sorted_folders:
                 try:
                     if folder.exists() and folder.is_dir():
                         # Check if folder is empty (or only contains hidden files)
@@ -839,18 +926,80 @@ def organize_audiobooks():
                 except Exception as e:
                     print(f"[ORGANIZE] Error cleaning folder {folder}: {e}")
         
+        # Clean up metadata and covers for successfully moved audiobooks
+        cleaned_metadata = 0
+        cleaned_covers = 0
+        if not copy_only and successfully_organized:
+            print(f"[ORGANIZE] Cleaning up metadata and covers for {len(successfully_organized)} successfully moved audiobooks")
+            
+            for audiobook_data in successfully_organized:
+                try:
+                    # Get the UUID and verify all original files are gone
+                    uuid = audiobook_data.get('original', {}).get('uuid')
+                    if not uuid:
+                        print(f"[ORGANIZE] Warning: No UUID found for {audiobook_data.get('original', {}).get('title', 'Unknown')}")
+                        continue
+                    
+                    # Verify all original files are actually gone
+                    original_paths = audiobook_data.get('original', {}).get('paths', [])
+                    all_files_moved = True
+                    
+                    for orig_path in original_paths:
+                        source_file = Path(MEDIA_ROOT) / orig_path
+                        if source_file.exists():
+                            print(f"[ORGANIZE] Warning: Original file still exists, skipping cleanup: {orig_path}")
+                            all_files_moved = False
+                            break
+                    
+                    if not all_files_moved:
+                        continue
+                    
+                    # Delete metadata file
+                    metadata_file = METADATA_DIR / f"{uuid}.json"
+                    if metadata_file.exists():
+                        metadata_file.unlink()
+                        print(f"[ORGANIZE] Deleted metadata: {metadata_file.name}")
+                        cleaned_metadata += 1
+                    
+                    # Delete cover file (check multiple extensions)
+                    cover_extensions = ['.jpg', '.jpeg', '.png', '.webp', '.gif']
+                    for ext in cover_extensions:
+                        cover_file = COVERS_DIR / f"{uuid}{ext}"
+                        if cover_file.exists():
+                            cover_file.unlink()
+                            print(f"[ORGANIZE] Deleted cover: {cover_file.name}")
+                            cleaned_covers += 1
+                            break
+                    
+                except Exception as e:
+                    print(f"[ORGANIZE] Error cleaning up data for {audiobook_data.get('original', {}).get('title', 'Unknown')}: {e}")
+        
         message = f"Organized {processed_count} audiobooks"
         if error_count > 0:
             message += f" ({error_count} errors encountered)"
         if cleanup_empty_folders and cleaned_folders > 0:
             message += f", cleaned {cleaned_folders} empty folders"
+        if not copy_only and (cleaned_metadata > 0 or cleaned_covers > 0):
+            message += f", removed {cleaned_metadata} metadata files and {cleaned_covers} cover files"
+        
+        # Notify frontend of organize completion
+        notify_change('organize_complete', message, {
+            'processed': processed_count,
+            'errors': error_count,
+            'cleaned_folders': cleaned_folders,
+            'cleaned_metadata': cleaned_metadata,
+            'cleaned_covers': cleaned_covers,
+            'copy_only': copy_only
+        })
         
         return jsonify({
             'success': True,
             'message': message,
             'processed': processed_count,
             'errors': error_count,
-            'cleaned_folders': cleaned_folders
+            'cleaned_folders': cleaned_folders,
+            'cleaned_metadata': cleaned_metadata,
+            'cleaned_covers': cleaned_covers
         })
         
     except Exception as e:

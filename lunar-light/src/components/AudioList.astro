@@ -92,6 +92,77 @@ let audioItems = [];
   let totalItems = 0;
   let totalPages = 0;
 
+  // Server-Sent Events for real-time updates
+  let eventSource = null;
+
+  function initializeEventSource() {
+    if (eventSource) {
+      eventSource.close();
+    }
+    
+    eventSource = new EventSource('http://localhost:4000/api/events');
+    
+    eventSource.onmessage = function(event) {
+      try {
+        const data = JSON.parse(event.data);
+        console.log('[SSE] Received event:', data);
+        
+        switch(data.type) {
+          case 'status_update':
+            handleStatusUpdate(data);
+            break;
+          case 'scan_complete':
+            handleScanComplete(data);
+            break;
+          case 'purge_complete':
+            handlePurgeComplete(data);
+            break;
+          case 'organize_complete':
+            handleOrganizeComplete(data);
+            break;
+        }
+      } catch (error) {
+        console.error('[SSE] Error parsing event:', error);
+      }
+    };
+    
+    eventSource.onerror = function(event) {
+      console.log('[SSE] Connection error, will retry...');
+    };
+  }
+
+  function handleStatusUpdate(data) {
+    console.log('[SSE] Status update received:', data);
+    // Find and update the specific item
+    const itemIndex = audioItems.findIndex(item => item.original?.uuid === data.data.uuid);
+    if (itemIndex !== -1) {
+      audioItems[itemIndex].status = data.data.status;
+      console.log(`[SSE] Updated status for ${data.data.title} to ${data.data.status}`);
+      renderAudioCards();
+    } else {
+      console.log('[SSE] Item not found in current page, refreshing data');
+      loadData(currentPage, itemsPerPage);
+    }
+  }
+
+  function handleScanComplete(data) {
+    console.log('[SSE] Scan complete received:', data);
+    // Reload data after scan to show new/updated items
+    loadData(currentPage, itemsPerPage);
+  }
+
+  function handlePurgeComplete(data) {
+    console.log('[SSE] Purge complete received:', data);
+    // Reload data after purge (reset to page 1 since items might have changed significantly)
+    loadData(1, itemsPerPage);
+  }
+
+  function handleOrganizeComplete(data) {
+    console.log('[SSE] Organize complete received:', data);
+    // Reload data after organize to remove moved items and update counts
+    loadData(currentPage, itemsPerPage);
+  }
+
   function updateStatus(index, status) {
     const item = audioItems[index];
     const uuid = item.original?.uuid;
@@ -682,10 +753,30 @@ let audioItems = [];
   });
 
   // Load data when the page loads
-  document.addEventListener('DOMContentLoaded', () => loadData());
+  document.addEventListener('DOMContentLoaded', () => {
+    loadData();
+    initializeEventSource();
+  });
   
   // Listen for refresh events from the parent page
   document.addEventListener('refreshData', () => loadData());
+  
+  // Listen for clear data events (e.g., when purge starts)
+  document.addEventListener('clearAudioData', () => {
+    audioItems = [];
+    totalItems = 0;
+    totalPages = 0;
+    currentPage = 1;
+    renderAudioCards();
+    updatePaginationControls();
+  });
+
+  // Cleanup event source when page unloads
+  window.addEventListener('beforeunload', () => {
+    if (eventSource) {
+      eventSource.close();
+    }
+  });
 
   // Close dropdowns when clicking outside
   document.addEventListener('click', function(event) {
