@@ -201,29 +201,62 @@ let audioItems = [];
   }
 
   function selectAudibleSuggestion(itemIndex, suggestionIndex) {
+    console.log(`selectAudibleSuggestion called: itemIndex=${itemIndex}, suggestionIndex=${suggestionIndex}`);
+    
     const item = audioItems[itemIndex];
+    console.log('Current item:', item);
+    
     if (item.audible_suggestions && item.audible_suggestions[suggestionIndex]) {
       const suggestion = item.audible_suggestions[suggestionIndex];
       const suggestionId = suggestion.id;
+      console.log(`Selecting suggestion ${suggestionId}: ${suggestion.title}`);
       
       const uuid = item.original?.uuid;
       if (uuid && suggestionId) {
+        console.log(`Making API call to select suggestion ${suggestionId} for UUID ${uuid}`);
+        
         fetch(`http://localhost:4000/api/audiobooks/${uuid}/select-audible`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ selected_id: suggestionId })
         }).then(r => r.json()).then(data => {
+          console.log('API response:', data);
+          
           if (data.success) {
-            console.log(`Selected audible suggestion ${suggestionId} for ${item.original?.title}`);
+            console.log(`Successfully selected audible suggestion ${suggestionId} for ${item.original?.title}`);
+            
+            // Update the local audiobook data
+            item.selected_audible_id = suggestionId;
+            item.new = data.selected_suggestion;
+            
+            console.log('Updated item:', item);
+            
+            // Update the selected audible data tracking
+            selectedAudibleData[itemIndex] = suggestionIndex;
+            console.log('Updated selectedAudibleData:', selectedAudibleData);
+            
+            // Re-render the cards to show the updated selection
+            renderAudioCards();
+            
+            // Close the dropdown
+            const dropdown = document.getElementById(`audible-dropdown-${itemIndex}`);
+            const arrow = document.getElementById(`dropdown-arrow-${itemIndex}`);
+            if (dropdown) dropdown.style.display = 'none';
+            if (arrow) arrow.style.transform = 'rotate(0deg)';
+            
           } else {
             console.error('Failed to update selection:', data.error);
+            alert(`Failed to update selection: ${data.error}`);
           }
-        }).catch(e => console.error('Failed to update selection:', e));
+        }).catch(e => {
+          console.error('Failed to update selection:', e);
+          alert(`Failed to update selection: ${e.message}`);
+        });
+      } else {
+        console.error('Missing UUID or suggestion ID:', { uuid, suggestionId });
       }
-      
-      selectedAudibleData[itemIndex] = suggestionIndex;
-      item.new = suggestion;
-      renderAudioCards();
+    } else {
+      console.error('Invalid item or suggestion index:', { item, suggestionIndex });
     }
   }
 
@@ -302,11 +335,15 @@ let audioItems = [];
             </div>
             ${item.audible_suggestions && item.audible_suggestions.length > 1 ? `
               <div id="audible-dropdown-${index}" class="absolute top-full left-0 right-0 bg-gray-800 border border-gray-600 rounded-lg shadow-lg z-50 max-h-96 overflow-y-auto" style="display: none;">
-                ${item.audible_suggestions.map((suggestion, suggestionIndex) => `
-                  <div onclick="selectAudibleSuggestion(${index}, ${suggestionIndex}); event.stopPropagation();" class="p-3 border-b border-gray-700 hover:bg-gray-700 cursor-pointer ${selectedAudibleData[index] === suggestionIndex ? 'bg-blue-900/50' : ''}">
-                    ${renderAudioInfo(suggestion, item.status, true, item.original, null)}
-                  </div>
-                `).join('')}
+                ${item.audible_suggestions.map((suggestion, suggestionIndex) => {
+                  const selectedId = item.selected_audible_id || (item.audible_suggestions[0] ? item.audible_suggestions[0].id : 1);
+                  const isSelected = suggestion.id === selectedId;
+                  return `
+                    <div onclick="selectAudibleSuggestion(${index}, ${suggestionIndex}); event.stopPropagation();" class="p-3 border-b border-gray-700 hover:bg-gray-700 cursor-pointer ${isSelected ? 'bg-blue-900/50' : ''}">
+                      ${renderAudioInfo(suggestion, item.status, true, item.original, null)}
+                    </div>
+                  `;
+                }).join('')}
               </div>
             ` : ''}
           </div>
