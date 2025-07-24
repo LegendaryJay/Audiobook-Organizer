@@ -1,0 +1,50 @@
+---
+const {
+  coverImage = '',
+  cover_url = '',
+  title = 'Missing',
+  subtitle = '',
+  author = 'Missing',
+  narrator = '',
+  runtime_length_min = '',
+  series = '',
+  seriesBook = '',
+  paths = [],
+  status = 'pending'
+} = Astro.props;
+
+// Use cover_url if available, fallback to coverImage for backward compatibility
+const coverSource = cover_url || coverImage;
+---
+<div class={`flex items-center rounded-lg transition ${status === 'accepted' ? 'bg-blue-100 border border-blue-400 shadow' : status === 'ignored' ? 'bg-gray-100 border border-gray-300 opacity-60' : status === 'broken' ? 'bg-red-100 border border-red-400' : 'bg-white border border-gray-200'}`}
+     style={status === 'ignored' || status === 'broken' ? 'padding:0.5rem;' : 'padding:1rem;'}>
+  {(status !== 'ignored' && status !== 'broken') && (
+    <div class="flex-shrink-0">
+      {coverSource ? (
+        <img src={coverSource} alt="Cover" class="w-32 h-32 rounded shadow object-contain" style="object-fit:contain; background-color: #000;" onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';" />
+      ) : null}
+      <div style="display:none;" class="w-32 h-32 rounded shadow bg-gray-200 flex items-center justify-center text-xs text-gray-500">
+        No cover image
+      </div>
+    </div>
+  )}
+  <div class={status === 'ignored' || status === 'broken' ? 'ml-2 flex flex-col text-sm' : 'ml-6 flex flex-col'}>
+    <p class={`font-semibold ${status === 'broken' ? 'text-red-700' : status === 'accepted' ? 'text-blue-700' : ''}`}>{title}{subtitle && <span class="font-normal"> - {subtitle}</span>}</p>
+    <p class={status === 'broken' ? 'text-red-600' : 'text-gray-600'}>{author}</p>
+    {narrator && <p class="text-gray-500">Narrated by: {narrator}</p>}
+    {runtime_length_min && <p class="text-gray-500">Length: {runtime_length_min} min</p>}
+    {series && <p class="text-blue-600">Series: {series}{seriesBook && ` (#${seriesBook})`}</p>}
+    {paths && paths.length > 1 ? (
+      <details>
+        <summary class="text-xs text-gray-400 break-all cursor-pointer">{paths[0]}</summary>
+        <ul class="ml-4 mt-1 text-xs text-gray-500">
+          {paths.map(p => <li>{p.split(/[\\\/]/).pop()}</li>)}
+        </ul>
+      </details>
+    ) : paths && paths.length === 1 ? (
+      <p class="text-xs text-gray-400 break-all">{paths[0]}</p>
+    ) : (
+      <p class="text-xs text-gray-400 break-all">No file path</p>
+    )}
+  </div>
+</div>

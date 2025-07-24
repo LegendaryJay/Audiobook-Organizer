@@ -1,0 +1,45 @@
+---
+import AudioInfo from './AudioInfo.astro';
+const { old = {}, new: updated = {}, state = 'pending', onAccept, onSkip, onManual, onUndo } = Astro.props;
+---
+
+<div class={`flex flex-col gap-2 p-4 border-b border-gray-200 rounded-lg transition ${state === 'accepted' ? 'bg-blue-50 border-blue-200' : state === 'ignored' ? 'bg-gray-100 border-gray-300' : state === 'broken' ? 'bg-red-50 border-red-200' : 'bg-white'}`}>
+  <div class="flex items-center justify-between gap-4">
+    <div class="flex-1">
+    <AudioInfo {...old} status={state} />
+    </div>
+    <div class="arrow text-2xl mx-4 text-gray-400">➡</div>
+    <div class="flex-1">
+    <AudioInfo {...updated} status={state} />
+    </div>
+  </div>
+  
+  {state === 'pending' && (
+    <div class="flex gap-2 mt-2">
+      <button class="px-3 py-1 bg-blue-600 text-white rounded flex items-center gap-1 hover:bg-blue-700" onclick={onAccept} title="Accept Changes">
+        <span class="material-icons">check</span> Accept Changes
+      </button>
+      <button class="px-3 py-1 bg-gray-300 text-gray-800 rounded flex items-center gap-1 hover:bg-gray-400" onclick={onSkip} title="Skip">
+        <span class="material-icons">arrow_forward</span> Skip
+      </button>
+      <button class="px-3 py-1 bg-yellow-400 text-gray-900 rounded flex items-center gap-1 hover:bg-yellow-500" onclick={onManual} title="Manual Search">
+        <span class="material-icons">search</span> Manual Search
+      </button>
+    </div>
+  )}
+  {state === 'accepted' && (
+    <div class="flex gap-2 mt-2">
+      <button class="px-3 py-1 bg-blue-500 text-white rounded flex items-center gap-1 hover:bg-blue-600" onclick={onUndo} title="Undo">
+        <span class="material-icons">undo</span> Undo
+      </button>
+    </div>
+  )}
+  {state === 'ignored' && (
+    <div class="flex gap-2 mt-2">
+      <button class="px-3 py-1 bg-gray-500 text-white rounded flex items-center gap-1 hover:bg-gray-600" onclick={onUndo} title="Undo">
+        <span class="material-icons">undo</span> Undo
+      </button>
+    </div>
+  )}
+
+</div>
