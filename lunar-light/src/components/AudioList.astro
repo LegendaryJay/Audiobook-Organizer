@@ -12,14 +12,85 @@ let audioItems = [];
   <div id="no-data" class="text-center py-8 text-gray-400" style="display: none;">
     No audiobook data available. Click "Fetch Metadata" or "Fetch Audible" to scan for audiobooks.
   </div>
+  
+  <!-- Pagination Controls (Top) -->
+  <div id="pagination-top" class="flex justify-between items-center mb-4 p-4 bg-gray-800 rounded-lg" style="display: none;">
+    <div class="flex items-center space-x-2">
+      <span class="text-gray-300 text-sm">Items per page:</span>
+      <select id="items-per-page" class="bg-gray-700 text-white px-2 py-1 rounded text-sm">
+        <option value="10">10</option>
+        <option value="25" selected>25</option>
+        <option value="50">50</option>
+        <option value="100">100</option>
+      </select>
+    </div>
+    
+    <div class="flex items-center space-x-2">
+      <span id="pagination-info" class="text-gray-300 text-sm"></span>
+    </div>
+    
+    <div class="flex items-center space-x-1">
+      <button id="first-page" onclick="goToPage(1)" 
+              class="px-3 py-1 bg-gray-700 hover:bg-gray-600 text-white rounded text-sm disabled:opacity-50 disabled:cursor-not-allowed">
+        First
+      </button>
+      <button id="prev-page" onclick="goToPrevPage()" 
+              class="px-3 py-1 bg-gray-700 hover:bg-gray-600 text-white rounded text-sm disabled:opacity-50 disabled:cursor-not-allowed">
+        Previous
+      </button>
+      <span id="page-numbers" class="flex items-center space-x-1"></span>
+      <button id="next-page" onclick="goToNextPage()" 
+              class="px-3 py-1 bg-gray-700 hover:bg-gray-600 text-white rounded text-sm disabled:opacity-50 disabled:cursor-not-allowed">
+        Next
+      </button>
+      <button id="last-page" onclick="goToLastPage()" 
+              class="px-3 py-1 bg-gray-700 hover:bg-gray-600 text-white rounded text-sm disabled:opacity-50 disabled:cursor-not-allowed">
+        Last
+      </button>
+    </div>
+  </div>
+  
   <div id="audio-cards" style="display: none;">
     <!-- Audio cards will be populated here -->
+  </div>
+  
+  <!-- Pagination Controls (Bottom) -->
+  <div id="pagination-bottom" class="flex justify-center items-center mt-4 p-4 bg-gray-800 rounded-lg" style="display: none;">
+    <div class="flex items-center space-x-1">
+      <button onclick="goToPage(1)" 
+              class="px-3 py-1 bg-gray-700 hover:bg-gray-600 text-white rounded text-sm disabled:opacity-50 disabled:cursor-not-allowed" 
+              id="first-page-bottom">
+        First
+      </button>
+      <button onclick="goToPrevPage()" 
+              class="px-3 py-1 bg-gray-700 hover:bg-gray-600 text-white rounded text-sm disabled:opacity-50 disabled:cursor-not-allowed" 
+              id="prev-page-bottom">
+        Previous
+      </button>
+      <span id="page-numbers-bottom" class="flex items-center space-x-1"></span>
+      <button onclick="goToNextPage()" 
+              class="px-3 py-1 bg-gray-700 hover:bg-gray-600 text-white rounded text-sm disabled:opacity-50 disabled:cursor-not-allowed" 
+              id="next-page-bottom">
+        Next
+      </button>
+      <button onclick="goToLastPage()" 
+              class="px-3 py-1 bg-gray-700 hover:bg-gray-600 text-white rounded text-sm disabled:opacity-50 disabled:cursor-not-allowed" 
+              id="last-page-bottom">
+        Last
+      </button>
+    </div>
   </div>
 </div>
 
 <script>
   let audioItems = [];
   let selectedAudibleData = {}; // Track selected audible data for each item
+  
+  // Pagination variables
+  let currentPage = 1;
+  let itemsPerPage = 25;
+  let totalItems = 0;
+  let totalPages = 0;
 
   function updateStatus(index, status) {
     const item = audioItems[index];
@@ -394,11 +465,12 @@ let audioItems = [];
   window.cancelManualSearch = cancelManualSearch;
   window.executeManualSearch = executeManualSearch;
 
-  // Load data function
-  async function loadData() {
-    console.log('loadData called - fetching from backend...');
+  // Load data function with pagination support
+  async function loadData(page = 1, limit = itemsPerPage) {
+    console.log(`loadData called - fetching page ${page} with limit ${limit}...`);
     try {
-      const response = await fetch('http://localhost:4000/api/audiobooks');
+      const offset = (page - 1) * limit;
+      const response = await fetch(`http://localhost:4000/api/audiobooks?offset=${offset}&limit=${limit}`);
       console.log('API Response status:', response.status);
       
       if (!response.ok) {
@@ -409,7 +481,13 @@ let audioItems = [];
       console.log('API Response data:', result);
       
       if (result.items && Array.isArray(result.items)) {
-        console.log(`Found ${result.items.length} audiobook items`);
+        console.log(`Found ${result.items.length} audiobook items out of ${result.total} total`);
+        
+        // Update pagination variables
+        totalItems = result.total || 0;
+        totalPages = Math.ceil(totalItems / limit);
+        currentPage = page;
+        itemsPerPage = limit;
         
         // Transform backend data to match frontend expectations
         audioItems = result.items.map((item, itemIndex) => {
@@ -452,6 +530,7 @@ let audioItems = [];
       }
       
       renderAudioCards();
+      updatePaginationControls();
     } catch (error) {
       console.error('Failed to load data:', error);
       document.getElementById('loading').style.display = 'none';
@@ -460,11 +539,116 @@ let audioItems = [];
     }
   }
 
+  // Pagination functions
+  function updatePaginationControls() {
+    const paginationTop = document.getElementById('pagination-top');
+    const paginationBottom = document.getElementById('pagination-bottom');
+    const paginationInfo = document.getElementById('pagination-info');
+    
+    if (totalItems === 0) {
+      paginationTop.style.display = 'none';
+      paginationBottom.style.display = 'none';
+      return;
+    }
+    
+    paginationTop.style.display = 'flex';
+    paginationBottom.style.display = 'flex';
+    
+    // Update pagination info
+    const startItem = (currentPage - 1) * itemsPerPage + 1;
+    const endItem = Math.min(currentPage * itemsPerPage, totalItems);
+    paginationInfo.textContent = `Showing ${startItem}-${endItem} of ${totalItems} audiobooks`;
+    
+    // Update page numbers for both top and bottom
+    updatePageNumbers('page-numbers');
+    updatePageNumbers('page-numbers-bottom');
+    
+    // Update button states
+    updateButtonStates();
+  }
+  
+  function updatePageNumbers(containerId) {
+    const container = document.getElementById(containerId);
+    container.innerHTML = '';
+    
+    if (totalPages <= 1) return;
+    
+    const maxVisiblePages = 5;
+    let startPage = Math.max(1, currentPage - Math.floor(maxVisiblePages / 2));
+    let endPage = Math.min(totalPages, startPage + maxVisiblePages - 1);
+    
+    // Adjust if we're near the end
+    if (endPage - startPage + 1 < maxVisiblePages) {
+      startPage = Math.max(1, endPage - maxVisiblePages + 1);
+    }
+    
+    for (let i = startPage; i <= endPage; i++) {
+      const button = document.createElement('button');
+      button.textContent = i.toString();
+      button.onclick = () => goToPage(i);
+      button.className = `px-3 py-1 text-sm rounded ${
+        i === currentPage 
+          ? 'bg-blue-600 text-white' 
+          : 'bg-gray-700 hover:bg-gray-600 text-white'
+      }`;
+      container.appendChild(button);
+    }
+  }
+  
+  function updateButtonStates() {
+    const buttons = [
+      'first-page', 'prev-page', 'next-page', 'last-page',
+      'first-page-bottom', 'prev-page-bottom', 'next-page-bottom', 'last-page-bottom'
+    ];
+    
+    buttons.forEach(id => {
+      const button = document.getElementById(id);
+      if (button) {
+        const isFirst = id.includes('first') || id.includes('prev');
+        const shouldDisable = isFirst ? currentPage === 1 : currentPage === totalPages;
+        button.disabled = shouldDisable;
+      }
+    });
+  }
+  
+  window.goToPage = function(page) {
+    if (page >= 1 && page <= totalPages && page !== currentPage) {
+      loadData(page, itemsPerPage);
+    }
+  };
+  
+  window.goToPrevPage = function() {
+    if (currentPage > 1) {
+      goToPage(currentPage - 1);
+    }
+  };
+  
+  window.goToNextPage = function() {
+    if (currentPage < totalPages) {
+      goToPage(currentPage + 1);
+    }
+  };
+  
+  window.goToLastPage = function() {
+    goToPage(totalPages);
+  };
+  
+  // Handle items per page change
+  document.addEventListener('DOMContentLoaded', function() {
+    const itemsPerPageSelect = document.getElementById('items-per-page');
+    if (itemsPerPageSelect) {
+      itemsPerPageSelect.addEventListener('change', function() {
+        const newLimit = parseInt(this.value);
+        loadData(1, newLimit); // Reset to page 1 when changing items per page
+      });
+    }
+  });
+
   // Load data when the page loads
-  document.addEventListener('DOMContentLoaded', loadData);
+  document.addEventListener('DOMContentLoaded', () => loadData());
   
   // Listen for refresh events from the parent page
-  document.addEventListener('refreshData', loadData);
+  document.addEventListener('refreshData', () => loadData());
 
   // Close dropdowns when clicking outside
   document.addEventListener('click', function(event) {

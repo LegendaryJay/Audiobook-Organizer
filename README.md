@@ -34,6 +34,9 @@ A modern web-based tool for organizing, enriching, and browsing your audiobook c
 - **Cover Image Extraction**: Automatically extracts and serves cover art
 - **Status Management**: Track audiobook processing status (pending, accepted, ignored, etc.)
 - **Streaming Processing**: Never loads entire library into memory
+- **Pagination Support**: Frontend displays audiobooks in pages (configurable: 10, 25, 50, 100 per page)
+- **Audible Integration**: Search and enhance metadata using Audible data
+- **File Organization**: Automated file organization with configurable destination paths
 
 ## Architecture
 - **Backend**: Python/Flask server with file-based storage
@@ -80,8 +83,9 @@ python app.py
 
 ## API Endpoints
 
-- `GET /api/audiobooks` - Get paginated list of audiobooks
-- `POST /api/audiobooks/:index/status` - Update audiobook status
+- `GET /api/audiobooks` - Get paginated list of audiobooks (supports `?offset=X&limit=Y`)
+- `POST /api/audiobooks/:uuid/status` - Update audiobook status  
+- `POST /api/organize` - Copy/move accepted audiobooks to organized folder structure
 - `POST /api/scan` - Trigger manual library scan
 - `GET /covers/:filename` - Serve cover images
 
