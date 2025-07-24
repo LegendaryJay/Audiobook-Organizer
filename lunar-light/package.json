@@ -16,6 +16,7 @@
   },
   "devDependencies": {
     "@astrojs/compiler": "^2.12.2",
+    "@types/node": "^24.1.0",
     "eslint": "^9.31.0",
     "prettier": "^3.6.2"
   }
