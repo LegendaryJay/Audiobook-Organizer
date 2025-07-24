@@ -62,8 +62,11 @@ def generate_audiobook_paths(audible_metadata: Dict, original_paths: List[str]) 
     Generate standardized file paths based on Audible metadata
     
     Format:
-    Single Book: {Series Title}/{Book Number}-{Book Title} ({Release Year})/{Book Title}
-    Multi-part Book: {Series Title}/{Book Number}-{Book Title} ({Release Year})/{Book Title} [Part XX]
+    {Author Name}/{Book Series}/{Book SeriesPosition-}{Book Title} ({Release YearFirst})/{Book Title} {[Part PartNumber:00]}
+    
+    Examples:
+    Author Name\\Single Book: Series Title\\1-The Edition Title (2025)\\The Edition Title
+    Author Name\\Multi-part Book: Series Title\\1-The Edition Title (2025)\\The Edition Title [Part 01]
     
     Args:
         audible_metadata: Selected Audible metadata from suggestions
@@ -74,12 +77,14 @@ def generate_audiobook_paths(audible_metadata: Dict, original_paths: List[str]) 
     """
     
     # Extract metadata components
+    author_name = audible_metadata.get('author', 'Unknown Author')
     series_title = audible_metadata.get('series', '') or audible_metadata.get('title', 'Unknown Series')
     book_title = audible_metadata.get('title', 'Unknown Title')
     book_number = audible_metadata.get('book_number')
     release_year = extract_year(audible_metadata.get('year'))
     
     # Sanitize components for filesystem
+    author_clean = sanitize_filename(author_name)
     series_clean = sanitize_filename(series_title)
     title_clean = sanitize_filename(book_title)
     
@@ -89,8 +94,9 @@ def generate_audiobook_paths(audible_metadata: Dict, original_paths: List[str]) 
     # Build year suffix
     year_suffix = f" ({release_year})" if release_year else ""
     
-    # Create folder structure
+    # Create folder structure with author first
     folder_name = f"{book_num_prefix}{title_clean}{year_suffix}"
+    author_folder = author_clean
     series_folder = series_clean
     
     # Determine if this is single or multi-part
@@ -102,7 +108,7 @@ def generate_audiobook_paths(audible_metadata: Dict, original_paths: List[str]) 
         # Single file audiobook
         original_ext = Path(original_paths[0]).suffix
         new_filename = f"{title_clean}{original_ext}"
-        full_path = f"{series_folder}/{folder_name}/{new_filename}"
+        full_path = f"{author_folder}/{series_folder}/{folder_name}/{new_filename}"
         organized_paths.append(full_path)
         
     else:
@@ -111,19 +117,21 @@ def generate_audiobook_paths(audible_metadata: Dict, original_paths: List[str]) 
             original_ext = Path(original_path).suffix
             part_num = f"{i:02d}"  # Zero-padded part number
             new_filename = f"{title_clean} [Part {part_num}]{original_ext}"
-            full_path = f"{series_folder}/{folder_name}/{new_filename}"
+            full_path = f"{author_folder}/{series_folder}/{folder_name}/{new_filename}"
             organized_paths.append(full_path)
     
     return {
         'organized_paths': organized_paths,
         'folder_structure': {
+            'author_folder': author_folder,
             'series_folder': series_folder,
             'book_folder': folder_name,
-            'full_folder_path': f"{series_folder}/{folder_name}",
+            'full_folder_path': f"{author_folder}/{series_folder}/{folder_name}",
             'is_multi_part': num_files > 1,
             'part_count': num_files
         },
         'metadata_used': {
+            'author': author_name,
             'series': series_title,
             'title': book_title,
             'book_number': book_number,

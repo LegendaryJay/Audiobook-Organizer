@@ -5,7 +5,7 @@ from pathlib import Path
 
 # Media directories
 MEDIA_ROOT = os.getenv('MEDIA_ROOT', 'Z:/Media')
-DEST_ROOT = os.getenv('DEST_ROOT', 'Z:/sorted')
+DEST_ROOT = os.getenv('DEST_ROOT', 'Z:/MediaSorted')
 
 # Data directories
 METADATA_DIR = Path('./metadata')

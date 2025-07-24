@@ -3,21 +3,17 @@ from flask_cors import CORS
 import os
 import json
 import threading
+import shutil
 from pathlib import Path
 from metadata_extractor import process_all_audiobooks, process_specific_folders
 from polling_watcher import start_file_watcher_safe
 from audiobook_tracker import AudiobookTracker
 from audible_service import AudibleSearchService
 from path_generator import generate_paths_for_audiobook, preview_organization
+from config import MEDIA_ROOT, DEST_ROOT, METADATA_DIR, COVERS_DIR, STATUS_OPTIONS
 
 app = Flask(__name__)
 CORS(app)  # Enable CORS for frontend communication
-
-# Configuration
-METADATA_DIR = Path('./metadata')
-COVERS_DIR = Path('./covers')
-MEDIA_ROOT = 'Z:/Media'  # Production directory
-STATUS_OPTIONS = ['pending', 'accepted', 'ignored', 'broken', 'manual']
 
 # Ensure directories exist
 METADATA_DIR.mkdir(exist_ok=True)
@@ -41,6 +37,7 @@ def root():
             'audible': '/api/audible/<uuid>',
             'paths': '/api/audiobooks/<uuid>/paths',
             'preview': '/api/audiobooks/<uuid>/preview',
+            'organize': '/api/organize',
             'purge': '/api/purge',
             'covers': '/covers/<filename>'
         }
@@ -723,6 +720,142 @@ def purge_and_regenerate():
     except Exception as e:
         print(f"[PURGE] Error during purge: {e}")
         return jsonify({'error': f'Purge failed: {str(e)}'}), 500
+
+# Organize accepted audiobooks
+@app.route('/api/organize', methods=['POST'])
+def organize_audiobooks():
+    """Copy/move accepted audiobooks to organized folder structure"""
+    try:
+        data = request.get_json() or {}
+        destination = data.get('destination', DEST_ROOT)
+        copy_only = data.get('copyOnly', True)
+        cleanup_empty_folders = data.get('cleanupEmptyFolders', True)
+        
+        print(f"[ORGANIZE] Starting organization to {destination}")
+        print(f"[ORGANIZE] Copy only: {copy_only}, Cleanup empty folders: {cleanup_empty_folders}")
+        
+        # Get all accepted audiobooks
+        accepted_audiobooks = []
+        processed_count = 0
+        error_count = 0
+        
+        for metadata_file in METADATA_DIR.glob('*.json'):
+            if metadata_file.name == 'tracking_summary.json':
+                continue
+                
+            try:
+                with open(metadata_file, 'r', encoding='utf-8') as f:
+                    audiobook_data = json.load(f)
+                
+                # Only process accepted audiobooks with Audible suggestions
+                if audiobook_data.get('status') == 'accepted' and audiobook_data.get('audible_suggestions'):
+                    accepted_audiobooks.append(audiobook_data)
+            except Exception as e:
+                print(f"[ORGANIZE] Error reading {metadata_file}: {e}")
+                error_count += 1
+                continue
+        
+        print(f"[ORGANIZE] Found {len(accepted_audiobooks)} accepted audiobooks to organize")
+        
+        if not accepted_audiobooks:
+            return jsonify({
+                'success': True,
+                'message': 'No accepted audiobooks found to organize',
+                'processed': 0,
+                'errors': 0
+            })
+        
+        # Process each accepted audiobook
+        source_folders_to_check = set()
+        
+        for audiobook_data in accepted_audiobooks:
+            try:
+                # Generate organized paths for this audiobook
+                # Convert 1-based selected_audible_id to 0-based index for path generator
+                selected_id = audiobook_data.get('selected_audible_id', 1)
+                selected_index = (selected_id - 1) if selected_id else 0
+                path_result = generate_paths_for_audiobook(audiobook_data, selected_index)
+                
+                if not path_result:
+                    print(f"[ORGANIZE] Could not generate paths for {audiobook_data.get('original', {}).get('title', 'Unknown')}")
+                    error_count += 1
+                    continue
+                
+                organized_paths = path_result['organized_paths']
+                original_paths = path_result['original_paths']
+                
+                # Create destination directory structure
+                dest_base = Path(destination)
+                dest_base.mkdir(parents=True, exist_ok=True)
+                
+                # Copy/move each file
+                for orig_path, org_path in zip(original_paths, organized_paths):
+                    try:
+                        source_file = Path(MEDIA_ROOT) / orig_path
+                        dest_file = dest_base / org_path
+                        
+                        # Remember source folder for cleanup
+                        source_folders_to_check.add(source_file.parent)
+                        
+                        # Create destination directory
+                        dest_file.parent.mkdir(parents=True, exist_ok=True)
+                        
+                        if source_file.exists():
+                            if copy_only:
+                                shutil.copy2(source_file, dest_file)
+                                print(f"[ORGANIZE] Copied: {orig_path} -> {org_path}")
+                            else:
+                                shutil.move(str(source_file), str(dest_file))
+                                print(f"[ORGANIZE] Moved: {orig_path} -> {org_path}")
+                        else:
+                            print(f"[ORGANIZE] Warning: Source file not found: {source_file}")
+                            error_count += 1
+                            
+                    except Exception as e:
+                        print(f"[ORGANIZE] Error processing file {orig_path}: {e}")
+                        error_count += 1
+                
+                processed_count += 1
+                
+            except Exception as e:
+                print(f"[ORGANIZE] Error processing audiobook {audiobook_data.get('original', {}).get('title', 'Unknown')}: {e}")
+                error_count += 1
+        
+        # Clean up empty source folders if requested
+        cleaned_folders = 0
+        if cleanup_empty_folders:
+            for folder in source_folders_to_check:
+                try:
+                    if folder.exists() and folder.is_dir():
+                        # Check if folder is empty (or only contains hidden files)
+                        contents = list(folder.iterdir())
+                        if not contents or all(f.name.startswith('.') for f in contents):
+                            folder.rmdir()
+                            print(f"[ORGANIZE] Removed empty folder: {folder}")
+                            cleaned_folders += 1
+                except OSError:
+                    # Folder not empty or other error, skip
+                    pass
+                except Exception as e:
+                    print(f"[ORGANIZE] Error cleaning folder {folder}: {e}")
+        
+        message = f"Organized {processed_count} audiobooks"
+        if error_count > 0:
+            message += f" ({error_count} errors encountered)"
+        if cleanup_empty_folders and cleaned_folders > 0:
+            message += f", cleaned {cleaned_folders} empty folders"
+        
+        return jsonify({
+            'success': True,
+            'message': message,
+            'processed': processed_count,
+            'errors': error_count,
+            'cleaned_folders': cleaned_folders
+        })
+        
+    except Exception as e:
+        print(f"[ORGANIZE] Error during organization: {e}")
+        return jsonify({'error': f'Organization failed: {str(e)}'}), 500
 
 # Test series info endpoint
 @app.route('/api/test-series', methods=['POST'])
