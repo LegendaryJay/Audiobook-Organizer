@@ -96,11 +96,16 @@ let audioItems = [];
   let eventSource = null;
 
   function initializeEventSource() {
+    console.log('[SSE] Initializing EventSource connection...');
     if (eventSource) {
       eventSource.close();
     }
     
-    eventSource = new EventSource('http://localhost:4000/api/events');
+    eventSource = new EventSource('/api/events');
+    
+    eventSource.onopen = function(event) {
+      console.log('[SSE] Connection opened successfully');
+    };
     
     eventSource.onmessage = function(event) {
       try {
@@ -114,12 +119,26 @@ let audioItems = [];
           case 'scan_complete':
             handleScanComplete(data);
             break;
+          case 'scan_started':
+            handleScanStarted(data);
+            break;
+          case 'scan_error':
+            handleScanError(data);
+            break;
           case 'purge_complete':
             handlePurgeComplete(data);
             break;
           case 'organize_complete':
             handleOrganizeComplete(data);
             break;
+          case 'test_event':
+            console.log('[SSE] Test event received:', data);
+            break;
+          case 'heartbeat':
+            console.log('[SSE] Heartbeat received');
+            break;
+          default:
+            console.log('[SSE] Unknown event type:', data.type);
         }
       } catch (error) {
         console.error('[SSE] Error parsing event:', error);
@@ -127,7 +146,9 @@ let audioItems = [];
     };
     
     eventSource.onerror = function(event) {
-      console.log('[SSE] Connection error, will retry...');
+      console.error('[SSE] Connection error:', event);
+      console.log('[SSE] ReadyState:', eventSource.readyState);
+      console.log('[SSE] Will retry connection...');
     };
   }
 
@@ -147,8 +168,25 @@ let audioItems = [];
 
   function handleScanComplete(data) {
     console.log('[SSE] Scan complete received:', data);
+    console.log('[SSE] Reloading data due to scan complete...');
     // Reload data after scan to show new/updated items
     loadData(currentPage, itemsPerPage);
+  }
+
+  function handleScanStarted(data) {
+    console.log('[SSE] Scan started received:', data);
+    // Show a loading indicator or notification that scan is in progress
+    // You could add a toast notification or update UI to show scan status
+    if (data.data?.triggered_by === 'file_watcher') {
+      console.log('[SSE] File watcher triggered library rescan');
+      // Optionally show a notification to the user
+    }
+  }
+
+  function handleScanError(data) {
+    console.log('[SSE] Scan error received:', data);
+    // Handle scan errors - could show error notification to user
+    console.error('Library scan failed:', data.data?.error);
   }
 
   function handlePurgeComplete(data) {
@@ -174,7 +212,7 @@ let audioItems = [];
       return;
     }
     
-    fetch(`http://localhost:4000/api/audiobooks/${uuid}/status`, {
+    fetch(`/api/audiobooks/${uuid}/status`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ status })
@@ -236,12 +274,12 @@ let audioItems = [];
       let response;
       
       if (!input || !input.value.trim()) {
-        response = await fetch(`http://localhost:4000/api/audible/${uuid}`, {
+        response = await fetch(`/api/audible/${uuid}`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' }
         });
       } else {
-        response = await fetch(`http://localhost:4000/api/audiobooks/${uuid}/manual-search`, {
+        response = await fetch(`/api/audiobooks/${uuid}/manual-search`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ query: input.value.trim() })
@@ -286,7 +324,7 @@ let audioItems = [];
       if (uuid && suggestionId) {
         console.log(`Making API call to select suggestion ${suggestionId} for UUID ${uuid}`);
         
-        fetch(`http://localhost:4000/api/audiobooks/${uuid}/select-audible`, {
+        fetch(`/api/audiobooks/${uuid}/select-audible`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ selected_id: suggestionId })
@@ -445,11 +483,11 @@ let audioItems = [];
       coverSource = info.cover_url;
     } else if (info.coverImage) {
       if (info.coverImage.startsWith('/covers/')) {
-        coverSource = `http://localhost:4000${info.coverImage}`;
+        coverSource = `${info.coverImage}`;
       } else if (info.coverImage.startsWith('http')) {
         coverSource = info.coverImage;
       } else {
-        coverSource = `http://localhost:4000/covers/${info.coverImage}`;
+        coverSource = `/covers/${info.coverImage}`;
       }
     }
 
@@ -575,21 +613,21 @@ let audioItems = [];
 
   // Load data function with pagination support
   async function loadData(page = 1, limit = itemsPerPage) {
-    console.log(`loadData called - fetching page ${page} with limit ${limit}...`);
+    console.log(`[LOADDATA] Called - page ${page}, limit ${limit}, currentPage ${currentPage}, itemsPerPage ${itemsPerPage}`);
     try {
       const offset = (page - 1) * limit;
-      const response = await fetch(`http://localhost:4000/api/audiobooks?offset=${offset}&limit=${limit}`);
-      console.log('API Response status:', response.status);
+      const response = await fetch(`/api/audiobooks?offset=${offset}&limit=${limit}`);
+      console.log('[LOADDATA] API Response status:', response.status);
       
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}: ${response.statusText}`);
       }
       
       const result = await response.json();
-      console.log('API Response data:', result);
+      console.log(`[LOADDATA] API Response: ${result.items.length} items, total: ${result.total}`);
       
       if (result.items && Array.isArray(result.items)) {
-        console.log(`Found ${result.items.length} audiobook items out of ${result.total} total`);
+        console.log(`[LOADDATA] Processing ${result.items.length} audiobook items out of ${result.total} total`);
         
         // Update pagination variables
         totalItems = result.total || 0;
@@ -631,16 +669,17 @@ let audioItems = [];
           };
         });
         
-        console.log('Transformed audioItems:', audioItems);
+        console.log('[LOADDATA] Transformed audioItems:', audioItems.length, 'items');
       } else {
-        console.log('No items found in response or items is not an array');
+        console.log('[LOADDATA] No items found in response or items is not an array');
         audioItems = [];
       }
       
+      console.log('[LOADDATA] Calling renderAudioCards...');
       renderAudioCards();
       updatePaginationControls();
     } catch (error) {
-      console.error('Failed to load data:', error);
+      console.error('[LOADDATA] Failed to load data:', error);
       document.getElementById('loading').style.display = 'none';
       document.getElementById('no-data').style.display = 'block';
       document.getElementById('audio-cards').style.display = 'none';
@@ -759,7 +798,10 @@ let audioItems = [];
   });
   
   // Listen for refresh events from the parent page
-  document.addEventListener('refreshData', () => loadData());
+  document.addEventListener('refreshData', () => {
+    console.log('[REFRESH] refreshData event received - calling loadData()');
+    loadData();
+  });
   
   // Listen for clear data events (e.g., when purge starts)
   document.addEventListener('clearAudioData', () => {

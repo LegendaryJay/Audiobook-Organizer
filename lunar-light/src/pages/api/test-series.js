@@ -14,7 +14,7 @@ export async function POST({ request }) {
     }
 
     // Call the Python backend series test endpoint
-    const response = await fetch('http://localhost:4000/api/test-series', {
+    const response = await fetch('/api/test-series', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',

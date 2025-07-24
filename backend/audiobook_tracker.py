@@ -79,7 +79,7 @@ class AudiobookTracker:
                     metadata = json.load(f)
                 
                 is_orphaned = False
-                paths = metadata.get('old', {}).get('paths', [])
+                paths = metadata.get('original', {}).get('paths', [])
                 
                 if not paths:
                     # No paths means invalid metadata
@@ -96,12 +96,12 @@ class AudiobookTracker:
                         if normalized_path in current_files:
                             paths_exist = True
                         
-                        # Get the primary folder for this metadata
+                        # Get the primary folder for this metadata (folder name only, not full path)
+                        folder_path = str(Path(path).parent)
                         if primary_folder is None:
-                            primary_folder = str(Path(path).parent)
+                            primary_folder = folder_path
                         
                         # Check if the folder containing this file is tracked
-                        folder_path = str(Path(path).parent)
                         if folder_path in tracked_folders:
                             folder_is_tracked = True
                     
@@ -124,13 +124,13 @@ class AudiobookTracker:
                 if is_orphaned:
                     orphaned_metadata.append({
                         'metadata_file': metadata_file,
-                        'uuid': metadata.get('old', {}).get('uuid', ''),
-                        'title': metadata.get('old', {}).get('title', ''),
-                        'paths': metadata.get('old', {}).get('paths', [])
+                        'uuid': metadata.get('original', {}).get('uuid', ''),
+                        'title': metadata.get('original', {}).get('title', ''),
+                        'paths': metadata.get('original', {}).get('paths', [])
                     })
                     
                     # Check for corresponding cover file
-                    cover_image = metadata.get('old', {}).get('coverImage', '')
+                    cover_image = metadata.get('original', {}).get('coverImage', '')
                     if cover_image and cover_image.startswith('/covers/'):
                         cover_filename = cover_image.replace('/covers/', '')
                         cover_path = self.covers_dir / cover_filename
@@ -154,14 +154,14 @@ class AudiobookTracker:
                     
                     orphaned_metadata.append({
                         'metadata_file': metadata_file,
-                        'uuid': metadata.get('old', {}).get('uuid', ''),
-                        'title': metadata.get('old', {}).get('title', ''),
-                        'paths': metadata.get('old', {}).get('paths', []),
+                        'uuid': metadata.get('original', {}).get('uuid', ''),
+                        'title': metadata.get('original', {}).get('title', ''),
+                        'paths': metadata.get('original', {}).get('paths', []),
                         'reason': 'duplicate'
                     })
                     
                     # Check for corresponding cover file
-                    cover_image = metadata.get('old', {}).get('coverImage', '')
+                    cover_image = metadata.get('original', {}).get('coverImage', '')
                     if cover_image and cover_image.startswith('/covers/'):
                         cover_filename = cover_image.replace('/covers/', '')
                         cover_path = self.covers_dir / cover_filename
@@ -176,7 +176,7 @@ class AudiobookTracker:
             try:
                 with open(metadata_file, 'r', encoding='utf-8') as f:
                     metadata = json.load(f)
-                    uuid = metadata.get('old', {}).get('uuid', '')
+                    uuid = metadata.get('original', {}).get('uuid', '')
                     if uuid:
                         active_metadata_uuids.add(uuid)
             except Exception:

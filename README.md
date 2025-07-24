@@ -55,27 +55,44 @@ lunar-light/                 # Astro frontend
 
 ## Setup
 
-### Python Backend
+### Integrated Server (Recommended)
+The Flask backend now serves both the API and the built frontend on a single port:
+
 ```bash
-cd backend
+# Build the frontend first
+cd lunar-light
+npm install
+npm run build
+
+# Start the integrated server
+cd ../backend
 pip install -r requirements.txt
 python app.py
 ```
-The backend will run on `http://localhost:4000`
 
-### Astro Frontend
+The complete application will run on `http://localhost:8081` (web interface and API)
+
+### Development Mode (Optional)
+For frontend development, you can run them separately:
+
 ```bash
+# Terminal 1: Backend
+cd backend
+python app.py
+
+# Terminal 2: Frontend dev server
 cd lunar-light
-npm install
-npx astro dev
+npm run dev
 ```
-The frontend will run on `http://localhost:4321`
 
 ### Configuration
-- Source library: `Z:/Media` (configurable via environment)
-- Organized destination: `Z:/MediaSorted`
-- Metadata storage: `./metadata/`
-- Cover storage: `./covers/`
+- **Web Interface**: `http://localhost:8081`
+- **API Endpoints**: `http://localhost:8081/api/...`
+- **Network Access**: Local network only (0.0.0.0:8081)
+- **Source library**: `Z:/Media` (configurable via environment)
+- **Organized destination**: `Z:/MediaSorted`
+- **Metadata storage**: `./metadata/`
+- **Cover storage**: `./covers/`
 
 ## API Endpoints
 
@@ -204,8 +221,12 @@ The backend uses streaming processing to handle large libraries:
 
 ## Usage Workflow
 
-1. **Start the backend**: `python app.py` from the backend directory
-2. **Start the frontend**: `npx astro dev` from the lunar-light directory
+1. **Build and start the server**: 
+   ```bash
+   cd lunar-light && npm run build
+   cd ../backend && python app.py
+   ```
+2. **Access the web interface**: Open `http://localhost:8081` in your browser
 3. **Initial scan**: The system automatically scans for audiobooks on startup
 4. **Review audiobooks**: 
    - View audiobooks in the web interface
@@ -214,6 +235,7 @@ The backend uses streaming processing to handle large libraries:
 5. **Accept or skip**: Mark audiobooks as accepted (will be organized) or ignored
 6. **Organize**: Click "Organize Accepted" to move files to organized structure
 7. **Real-time updates**: All changes reflect immediately without page refresh
+8. **Network access**: The server is accessible from other devices on your local network at `http://[your-ip]:8081`
 
 ## Future Enhancements
 - Audio transcription for metadata inference when file tags are missing

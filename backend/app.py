@@ -1,4 +1,4 @@
-from flask import Flask, jsonify, request, send_from_directory, Response
+from flask import Flask, jsonify, request, send_from_directory, Response, send_file
 from flask_cors import CORS
 import os
 import json
@@ -13,7 +13,10 @@ from audible_service import AudibleSearchService
 from path_generator import generate_paths_for_audiobook, preview_organization
 from config import MEDIA_ROOT, DEST_ROOT, METADATA_DIR, COVERS_DIR, STATUS_OPTIONS
 
-app = Flask(__name__)
+# Path to built frontend files
+FRONTEND_DIST = Path(__file__).parent.parent / 'lunar-light' / 'dist'
+
+app = Flask(__name__, static_folder=str(FRONTEND_DIST), static_url_path='')
 CORS(app)  # Enable CORS for frontend communication
 
 # Global change notification system
@@ -45,18 +48,25 @@ audible_service = AudibleSearchService(COVERS_DIR)
 @app.route('/api/events')
 def stream_events():
     """Server-Sent Events endpoint for real-time updates"""
+    print("[SSE] New client connected to events stream")
+    
     def event_stream():
-        last_seen = 0
+        # Start from current position, don't send historical events
+        with change_event_lock:
+            last_seen = len(change_events)
+        
         while True:
             try:
                 with change_event_lock:
-                    # Send any new events
+                    # Send only new events since this client connected
                     for i, event in enumerate(change_events[last_seen:], last_seen):
+                        print(f"[SSE] Sending event to client: {event['type']} - {event['message']}")
                         yield f"data: {json.dumps(event)}\n\n"
                         last_seen = i + 1
                 
                 time.sleep(1)  # Check for new events every second
             except GeneratorExit:
+                print("[SSE] Client disconnected from events stream")
                 break
             except Exception as e:
                 print(f"[SSE] Error in event stream: {e}")
@@ -65,25 +75,34 @@ def stream_events():
     return Response(event_stream(), mimetype='text/event-stream', 
                    headers={'Cache-Control': 'no-cache', 'Connection': 'keep-alive'})
 
-# Root endpoint for API info
+# Root endpoint serves the frontend
 @app.route('/')
-def root():
-    return jsonify({
-        'message': 'Audiobook Organizer API is running',
-        'endpoints': {
-            'audiobooks': '/api/audiobooks',
-            'scan': '/api/scan',
-            'status': '/api/status',
-            'cleanup': '/api/cleanup',
-            'orphaned': '/api/orphaned',
-            'audible': '/api/audible/<uuid>',
-            'paths': '/api/audiobooks/<uuid>/paths',
-            'preview': '/api/audiobooks/<uuid>/preview',
-            'organize': '/api/organize',
-            'purge': '/api/purge',
-            'covers': '/covers/<filename>'
-        }
+def serve_frontend():
+    return send_file(FRONTEND_DIST / 'index.html')
+
+# Serve frontend static assets
+@app.route('/<path:path>')
+def serve_static(path):
+    # Don't serve API routes as static files
+    if path.startswith('api/'):
+        return jsonify({'error': 'API endpoint not found'}), 404
+    
+    # Try to serve the file from dist
+    file_path = FRONTEND_DIST / path
+    if file_path.exists() and file_path.is_file():
+        return send_file(file_path)
+    
+    # If file doesn't exist, serve index.html for client-side routing
+    return send_file(FRONTEND_DIST / 'index.html')
+
+@app.route('/api/test-sse', methods=['POST'])
+def test_sse():
+    """Test SSE by sending a test event"""
+    notify_change('test_event', 'This is a test SSE event', {
+        'timestamp': time.time(),
+        'test': True
     })
+    return jsonify({'success': True, 'message': 'Test SSE event sent'})
 
 # Paginated audiobooks endpoint
 @app.route('/api/audiobooks')
@@ -210,14 +229,33 @@ def scan_library():
         # Update tracking summary after scan
         tracker.update_tracking_after_scan(count)
         
+        # Automatic cleanup of orphaned files after any scan
+        cleanup_count = {'metadata': 0, 'covers': 0}
+        try:
+            print("Performing automatic cleanup of orphaned data...")
+            cleanup_report = tracker.cleanup_orphaned_data(dry_run=False)
+            cleanup_count['metadata'] = cleanup_report['orphaned_metadata_count']
+            cleanup_count['covers'] = cleanup_report['orphaned_covers_count']
+            
+            if cleanup_count['metadata'] > 0 or cleanup_count['covers'] > 0:
+                print(f"🧹 Cleaned up {cleanup_count['metadata']} orphaned metadata files and {cleanup_count['covers']} orphaned covers")
+        except Exception as e:
+            print(f"Warning: Could not perform automatic cleanup: {e}")
+        
         # Notify frontend of scan completion
-        if count > 0:
-            notify_change('scan_complete', f"Scan completed: {count} audiobooks processed", {
+        if count > 0 or cleanup_count['metadata'] > 0 or cleanup_count['covers'] > 0:
+            notify_change('scan_complete', f"Scan completed: {count} audiobooks processed, {cleanup_count['metadata']} orphaned metadata cleaned, {cleanup_count['covers']} orphaned covers cleaned", {
                 'count': count,
-                'full_scan': force_full_scan
+                'full_scan': force_full_scan,
+                'cleanup': cleanup_count
             })
         
-        return jsonify({'success': True, 'count': count, 'full_scan': force_full_scan})
+        return jsonify({
+            'success': True, 
+            'count': count, 
+            'full_scan': force_full_scan,
+            'cleanup': cleanup_count
+        })
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
 
@@ -650,7 +688,7 @@ def initialize_app():
     
     # Start file watcher in background thread with error handling
     try:
-        watcher_thread = threading.Thread(target=start_file_watcher_safe, args=(MEDIA_ROOT,), daemon=True)
+        watcher_thread = threading.Thread(target=start_file_watcher_safe, args=(MEDIA_ROOT, notify_change), daemon=True)
         watcher_thread.start()
     except Exception as e:
         print(f"Warning: Could not start file watcher: {e}")
@@ -671,6 +709,17 @@ def initialize_app():
         
         # Update tracking summary after scan
         tracker.update_tracking_after_scan(count)
+        
+        # Automatic cleanup of orphaned files
+        try:
+            print("Checking for orphaned data...")
+            cleanup_report = tracker.cleanup_orphaned_data(dry_run=False)
+            if cleanup_report['orphaned_metadata_count'] > 0 or cleanup_report['orphaned_covers_count'] > 0:
+                print(f"🧹 Cleaned up {cleanup_report['orphaned_metadata_count']} orphaned metadata files and {cleanup_report['orphaned_covers_count']} orphaned covers")
+            else:
+                print("✅ No orphaned data found")
+        except Exception as e:
+            print(f"Warning: Could not perform automatic cleanup: {e}")
         
         # Show total status
         summary = tracker.load_summary()
@@ -1029,5 +1078,7 @@ def test_series():
 
 if __name__ == '__main__':
     initialize_app()
-    print("Audiobook backend running on http://localhost:4000")
-    app.run(host='0.0.0.0', port=4000, debug=False)
+    print("Audiobook Organizer running on http://localhost:8081")
+    print("API endpoints available at http://localhost:8081/api/...")
+    print("Web interface available at http://localhost:8081")
+    app.run(host='0.0.0.0', port=8081, debug=False)

@@ -4,7 +4,7 @@ export async function GET({ request }) {
     console.log('Get data API called');
     
     // Call the Python backend to get current audiobook data
-    const response = await fetch('http://localhost:4000/api/audiobooks', {
+    const response = await fetch('/api/audiobooks', {
       method: 'GET',
       headers: {
         'Content-Type': 'application/json',

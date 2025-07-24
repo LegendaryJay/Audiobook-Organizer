@@ -16,7 +16,7 @@ export async function POST({ request }) {
     console.log('Update status request:', { uuid, status });
 
     // Call the Python backend to update status using UUID
-    const response = await fetch(`http://localhost:4000/api/audiobooks/${uuid}/status`, {
+    const response = await fetch(`/api/audiobooks/${uuid}/status`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
