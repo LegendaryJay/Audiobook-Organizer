@@ -7,7 +7,24 @@ import Layout from '../layouts/Layout.astro';
   <div id="status-message" class="mb-4 p-2 rounded hidden"></div>
   <h1 class="text-2xl font-bold mb-4 text-gray-100">Audiobook Organizer</h1>
   <AudioList />
-  <script>
+  
+  <!-- Purge Button Section -->
+  <div class="mt-8 p-4 border border-red-700 bg-red-900/20 rounded-lg">
+    <h2 class="text-lg font-semibold text-red-300 mb-2">⚠️ Danger Zone</h2>
+    <p class="text-red-200 text-sm mb-4">
+      This will delete ALL metadata and cover images, then regenerate everything from scratch. 
+      This cannot be undone.
+    </p>
+    <button 
+      id="purge-button" 
+      onclick="confirmPurge()" 
+      class="px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700 focus:ring-2 focus:ring-red-500 focus:outline-none"
+    >
+      🗑️ Purge All Data & Regenerate
+    </button>
+  </div>
+
+  <script is:inline>
     function showMessage(message, type = 'info') {
       const statusDiv = document.getElementById('status-message');
       if (statusDiv) {
@@ -19,6 +36,71 @@ import Layout from '../layouts/Layout.astro';
         setTimeout(() => {
           statusDiv.classList.add('hidden');
         }, 5000);
+      }
+    }
+
+    function confirmPurge() {
+      const confirmed = confirm(
+        "⚠️ WARNING: This will permanently delete ALL audiobook metadata and cover images, then regenerate everything from scratch.\n\n" +
+        "This action cannot be undone. Are you absolutely sure you want to continue?"
+      );
+      
+      if (confirmed) {
+        const doubleConfirm = confirm(
+          "🚨 FINAL WARNING: This will DELETE EVERYTHING and start over.\n\n" +
+          "Click OK to proceed with the purge, or Cancel to abort."
+        );
+        
+        if (doubleConfirm) {
+          executePurge();
+        }
+      }
+    }
+
+    function executePurge() {
+      const purgeButton = document.getElementById('purge-button');
+      if (purgeButton) {
+        purgeButton.disabled = true;
+        purgeButton.innerHTML = '🔄 Purging...';
+        purgeButton.className = 'px-4 py-2 bg-gray-600 text-white rounded cursor-not-allowed';
+      }
+
+      showMessage('🗑️ Starting purge process... This may take a while.', 'info');
+
+      fetch('http://localhost:4000/api/purge', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ confirm: true })
+      })
+      .then(response => response.json())
+      .then(data => {
+        if (data.success) {
+          showMessage(
+            `✅ Purge completed successfully! ${data.message}`, 
+            'success'
+          );
+          // Reload the page to show the regenerated data
+          setTimeout(() => {
+            window.location.reload();
+          }, 2000);
+        } else {
+          showMessage(`❌ Purge failed: ${data.error || data.message}`, 'error');
+          resetPurgeButton();
+        }
+      })
+      .catch(error => {
+        console.error('Purge error:', error);
+        showMessage(`❌ Purge failed: ${error.message}`, 'error');
+        resetPurgeButton();
+      });
+    }
+
+    function resetPurgeButton() {
+      const purgeButton = document.getElementById('purge-button');
+      if (purgeButton) {
+        purgeButton.disabled = false;
+        purgeButton.innerHTML = '🗑️ Purge All Data & Regenerate';
+        purgeButton.className = 'px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700 focus:ring-2 focus:ring-red-500 focus:outline-none';
       }
     }
   </script>

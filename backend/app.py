@@ -8,6 +8,7 @@ from metadata_extractor import process_all_audiobooks, process_specific_folders
 from polling_watcher import start_file_watcher_safe
 from audiobook_tracker import AudiobookTracker
 from audible_service import AudibleSearchService
+from path_generator import generate_paths_for_audiobook, preview_organization
 
 app = Flask(__name__)
 CORS(app)  # Enable CORS for frontend communication
@@ -40,6 +41,7 @@ def root():
             'audible': '/api/audible/<uuid>',
             'paths': '/api/audiobooks/<uuid>/paths',
             'preview': '/api/audiobooks/<uuid>/preview',
+            'purge': '/api/purge',
             'covers': '/covers/<filename>'
         }
     })
@@ -96,6 +98,35 @@ def update_status(index):
         
         # Update the metadata file
         metadata_file = metadata_files[index]
+        with open(metadata_file, 'r', encoding='utf-8') as f:
+            metadata = json.load(f)
+        
+        metadata['status'] = status
+        
+        with open(metadata_file, 'w', encoding='utf-8') as f:
+            json.dump(metadata, f, indent=2, ensure_ascii=False)
+        
+        return jsonify({'success': True})
+    
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+# Update audiobook status by UUID
+@app.route('/api/audiobooks/<uuid_str>/status', methods=['POST'])
+def update_status_by_uuid(uuid_str):
+    try:
+        data = request.get_json()
+        status = data.get('status')
+        
+        if status not in STATUS_OPTIONS:
+            return jsonify({'success': False, 'error': 'Invalid status'}), 400
+        
+        # Find the metadata file by UUID
+        metadata_file = METADATA_DIR / f"{uuid_str}.json"
+        if not metadata_file.exists():
+            return jsonify({'success': False, 'error': 'Audiobook not found'}), 404
+        
+        # Update the metadata file
         with open(metadata_file, 'r', encoding='utf-8') as f:
             metadata = json.load(f)
         
@@ -192,13 +223,9 @@ def apply_changes(index):
 
 # Generate organized paths for audiobook
 @app.route('/api/audiobooks/<uuid_str>/paths', methods=['POST'])
-def generate_audiobook_paths(uuid_str):
+def generate_audiobook_paths_endpoint(uuid_str):
     """Generate organized file paths for an audiobook based on selected Audible suggestion"""
     try:
-        # Get request data
-        data = request.get_json() or {}
-        selected_suggestion_index = data.get('suggestion_index', 0)
-        
         # Find the metadata file
         metadata_file = METADATA_DIR / f"{uuid_str}.json"
         if not metadata_file.exists():
@@ -208,14 +235,25 @@ def generate_audiobook_paths(uuid_str):
         with open(metadata_file, 'r', encoding='utf-8') as f:
             audiobook_data = json.load(f)
         
-        # Generate organized paths
-        path_result = audible_service.generate_organized_paths(audiobook_data, selected_suggestion_index)
+        # Get the selected audible ID and find the corresponding suggestion index
+        selected_audible_id = audiobook_data.get('selected_audible_id', 1)
+        audible_suggestions = audiobook_data.get('audible_suggestions', [])
+        
+        # Find the suggestion with the selected ID
+        selected_suggestion_index = 0  # Default to first
+        for i, suggestion in enumerate(audible_suggestions):
+            if suggestion.get('id') == selected_audible_id:
+                selected_suggestion_index = i
+                break
+        
+        # Generate organized paths using the path generator
+        path_result = generate_paths_for_audiobook(audiobook_data, selected_suggestion_index)
         
         if not path_result:
             return jsonify({
                 'success': False,
                 'error': 'Could not generate organized paths',
-                'message': 'Path generation service not available or invalid data'
+                'message': 'Path generation failed or invalid data'
             }), 400
         
         return jsonify({
@@ -232,10 +270,6 @@ def generate_audiobook_paths(uuid_str):
 def preview_audiobook_paths(uuid_str):
     """Preview how an audiobook would be organized"""
     try:
-        # Get request data
-        data = request.get_json() or {}
-        selected_suggestion_index = data.get('suggestion_index', 0)
-        
         # Find the metadata file
         metadata_file = METADATA_DIR / f"{uuid_str}.json"
         if not metadata_file.exists():
@@ -245,8 +279,19 @@ def preview_audiobook_paths(uuid_str):
         with open(metadata_file, 'r', encoding='utf-8') as f:
             audiobook_data = json.load(f)
         
-        # Generate preview
-        preview_text = audible_service.preview_audiobook_organization(audiobook_data, selected_suggestion_index)
+        # Get the selected audible ID and find the corresponding suggestion index
+        selected_audible_id = audiobook_data.get('selected_audible_id', 1)
+        audible_suggestions = audiobook_data.get('audible_suggestions', [])
+        
+        # Find the suggestion with the selected ID
+        selected_suggestion_index = 0  # Default to first
+        for i, suggestion in enumerate(audible_suggestions):
+            if suggestion.get('id') == selected_audible_id:
+                selected_suggestion_index = i
+                break
+        
+        # Generate preview using the path generator
+        preview_text = preview_organization(audiobook_data, selected_suggestion_index)
         
         return jsonify({
             'success': True,
@@ -282,7 +327,25 @@ def enhance_with_audible(uuid_str):
         
         if enhancement_result.get('audible_enhanced'):
             # Update the metadata file with new suggestions
-            data['audible_suggestions'] = enhancement_result.get('audible_suggestions', [])
+            suggestions = enhancement_result.get('audible_suggestions', [])
+            
+            # Generate paths for each suggestion
+            for suggestion in suggestions:
+                try:
+                    temp_audiobook_data = {
+                        'original': original_metadata,
+                        'audible_suggestions': [suggestion]
+                    }
+                    path_result = generate_paths_for_audiobook(temp_audiobook_data, 0)
+                    if path_result and path_result.get('organized_paths'):
+                        suggestion['paths'] = path_result['organized_paths']
+                    else:
+                        suggestion['paths'] = original_metadata.get('paths', [])
+                except Exception as e:
+                    print(f"[AUDIBLE_ENHANCE] Warning: Could not generate paths for suggestion {suggestion.get('id', 'unknown')}: {e}")
+                    suggestion['paths'] = original_metadata.get('paths', [])
+            
+            data['audible_suggestions'] = suggestions
             data['selected_audible_id'] = enhancement_result.get('selected_audible_id', 1)  # Set default selection
             data['audible_last_search'] = enhancement_result.get('message', '')
             
@@ -327,8 +390,15 @@ def manual_audible_search(uuid_str):
         with open(metadata_file, 'r', encoding='utf-8') as f:
             metadata = json.load(f)
         
+        print(f"[DEBUG] Loaded metadata keys: {list(metadata.keys())}")
+        print(f"[DEBUG] Has 'original' key: {'original' in metadata}")
+        
         original_metadata = metadata.get('original', {})
+        print(f"[DEBUG] Original metadata: {bool(original_metadata)}")
+        
         if not original_metadata:
+            print(f"[ERROR] Invalid metadata structure for {uuid_str}")
+            print(f"[ERROR] Metadata content: {metadata}")
             return jsonify({'error': 'Invalid metadata structure'}), 400
         
         print(f"[API] Manual Audible search requested for: {original_metadata.get('title', 'Unknown')} with query: '{search_query}'")
@@ -364,7 +434,6 @@ def manual_audible_search(uuid_str):
             
             # Generate paths for this suggestion
             try:
-                from path_generator import generate_paths_for_audiobook
                 temp_audiobook_data = {
                     'original': original_metadata,
                     'audible_suggestions': [enhanced_meta]
@@ -572,6 +641,88 @@ def initialize_app():
             print("   Use /api/cleanup endpoint to clean up orphaned data")
     except Exception as e:
         print(f"Error checking for orphaned data: {e}")
+
+# Purge all data and regenerate
+@app.route('/api/purge', methods=['POST'])
+def purge_and_regenerate():
+    """Delete all metadata and covers, then regenerate everything from scratch"""
+    try:
+        data = request.get_json() or {}
+        confirm = data.get('confirm', False)
+        
+        if not confirm:
+            return jsonify({
+                'error': 'Confirmation required',
+                'message': 'Set "confirm": true to proceed with purge'
+            }), 400
+        
+        print("[PURGE] Starting purge and regeneration process...")
+        
+        # Count existing files before deletion
+        metadata_count = len([f for f in METADATA_DIR.glob('*.json') if f.name != 'tracking_summary.json'])
+        cover_count = len(list(COVERS_DIR.glob('*')))
+        
+        # Delete all metadata files (except tracking summary)
+        deleted_metadata = 0
+        for metadata_file in METADATA_DIR.glob('*.json'):
+            if metadata_file.name != 'tracking_summary.json':
+                try:
+                    metadata_file.unlink()
+                    deleted_metadata += 1
+                except Exception as e:
+                    print(f"[PURGE] Warning: Could not delete {metadata_file}: {e}")
+        
+        # Delete all cover files
+        deleted_covers = 0
+        for cover_file in COVERS_DIR.glob('*'):
+            try:
+                cover_file.unlink()
+                deleted_covers += 1
+            except Exception as e:
+                print(f"[PURGE] Warning: Could not delete {cover_file}: {e}")
+        
+        # Delete tracking summary to force full regeneration
+        tracking_summary = METADATA_DIR / 'tracking_summary.json'
+        if tracking_summary.exists():
+            try:
+                tracking_summary.unlink()
+                print("[PURGE] Deleted tracking summary")
+            except Exception as e:
+                print(f"[PURGE] Warning: Could not delete tracking summary: {e}")
+        
+        print(f"[PURGE] Deleted {deleted_metadata} metadata files and {deleted_covers} cover files")
+        
+        # Regenerate everything from scratch
+        print("[PURGE] Starting full regeneration...")
+        try:
+            count = process_all_audiobooks(MEDIA_ROOT)
+            tracker.update_tracking_after_scan(count)
+            print(f"[PURGE] Regenerated {count} audiobooks")
+            
+            return jsonify({
+                'success': True,
+                'message': f'Purge complete. Deleted {deleted_metadata} metadata files and {deleted_covers} covers. Regenerated {count} audiobooks.',
+                'deleted': {
+                    'metadata': deleted_metadata,
+                    'covers': deleted_covers
+                },
+                'regenerated': count
+            })
+            
+        except Exception as e:
+            print(f"[PURGE] Error during regeneration: {e}")
+            return jsonify({
+                'success': False,
+                'error': f'Purge completed but regeneration failed: {str(e)}',
+                'deleted': {
+                    'metadata': deleted_metadata,
+                    'covers': deleted_covers
+                }
+            }), 500
+    
+    except Exception as e:
+        print(f"[PURGE] Error during purge: {e}")
+        return jsonify({'error': f'Purge failed: {str(e)}'}), 500
 
 # Test series info endpoint
 @app.route('/api/test-series', methods=['POST'])

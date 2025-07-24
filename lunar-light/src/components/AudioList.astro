@@ -22,10 +22,20 @@ let audioItems = [];
   let selectedAudibleData = {}; // Track selected audible data for each item
 
   function updateStatus(index, status) {
-    fetch('/api/update-status', {
+    const item = audioItems[index];
+    const uuid = item.original?.uuid;
+    
+    console.log('updateStatus called:', { index, status, item, uuid });
+    
+    if (!uuid) {
+      console.error('No UUID found for item:', item);
+      return;
+    }
+    
+    fetch(`http://localhost:4000/api/audiobooks/${uuid}/status`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ index, status })
+      body: JSON.stringify({ status })
     }).then(r => r.json()).then(data => {
       if (data.success) {
         audioItems[index].status = status;
@@ -54,7 +64,6 @@ let audioItems = [];
       searchDiv.classList.toggle('hidden');
       searchDiv.classList.toggle('flex');
       if (!searchDiv.classList.contains('hidden')) {
-        // Focus the input when showing
         const input = document.getElementById(`manual-query-${index}`);
         if (input) input.focus();
       }
@@ -74,7 +83,7 @@ let audioItems = [];
   async function executeManualSearch(index) {
     const input = document.getElementById(`manual-query-${index}`);
     const item = audioItems[index];
-    const uuid = item.original?.uuid || item.old?.uuid;
+    const uuid = item.original?.uuid;
     
     if (!uuid) {
       console.error('Cannot perform search: No UUID found');
@@ -84,15 +93,12 @@ let audioItems = [];
     try {
       let response;
       
-      // Check if input is empty or only whitespace
       if (!input || !input.value.trim()) {
-        // Perform normal Audible enhancement (no custom query)
         response = await fetch(`http://localhost:4000/api/audible/${uuid}`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' }
         });
       } else {
-        // Perform manual search with custom query
         response = await fetch(`http://localhost:4000/api/audiobooks/${uuid}/manual-search`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -103,11 +109,9 @@ let audioItems = [];
       const data = await response.json();
       
       if (data.success) {
-        // Update the audiobook item with new audible suggestions
         audioItems[index].audible_suggestions = data.audible_suggestions || [];
         audioItems[index].selected_audible_id = data.selected_audible_id || 1;
         
-        // Update the "new" field with the selected suggestion
         if (data.audible_suggestions && data.audible_suggestions.length > 0) {
           const selectedId = data.selected_audible_id || 1;
           const selectedSuggestion = data.audible_suggestions.find(s => s.id === selectedId) || data.audible_suggestions[0];
@@ -115,10 +119,7 @@ let audioItems = [];
           selectedAudibleData[index] = data.audible_suggestions.findIndex(s => s.id === selectedId) || 0;
         }
         
-        // Hide the search input
         cancelManualSearch(index);
-        
-        // Re-render the cards
         renderAudioCards();
       } else {
         console.error('Search failed:', data.error || 'Unknown error');
@@ -134,8 +135,7 @@ let audioItems = [];
       const suggestion = item.audible_suggestions[suggestionIndex];
       const suggestionId = suggestion.id;
       
-      // Update backend with the selected ID
-      const uuid = item.original?.uuid || item.old?.uuid;
+      const uuid = item.original?.uuid;
       if (uuid && suggestionId) {
         fetch(`http://localhost:4000/api/audiobooks/${uuid}/select-audible`, {
           method: 'POST',
@@ -143,7 +143,7 @@ let audioItems = [];
           body: JSON.stringify({ selected_id: suggestionId })
         }).then(r => r.json()).then(data => {
           if (data.success) {
-            console.log(`Selected audible suggestion ${suggestionId} for ${item.old?.title}`);
+            console.log(`Selected audible suggestion ${suggestionId} for ${item.original?.title}`);
           } else {
             console.error('Failed to update selection:', data.error);
           }
@@ -156,58 +156,14 @@ let audioItems = [];
     }
   }
 
-  async function showOrganizedPaths(itemIndex, suggestionIndex) {
-    try {
-      const item = audioItems[itemIndex];
-      const uuid = item.original?.uuid || item.old?.uuid;
-      
-      if (!uuid) {
-        console.error('Cannot generate paths: No UUID found');
-        return;
-      }
-
-      const actualSuggestionIndex = suggestionIndex !== undefined ? suggestionIndex : (selectedAudibleData[itemIndex] || 0);
-      
-      const response = await fetch(`http://localhost:4000/api/audiobooks/${uuid}/preview`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ suggestion_index: actualSuggestionIndex })
-      });
-
-      const data = await response.json();
-      
-      if (data.success) {
-        // Show preview in a modal or alert
-        const modal = document.createElement('div');
-        modal.className = 'fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50';
-        modal.innerHTML = `
-          <div class="bg-gray-800 text-gray-100 p-6 rounded-lg max-w-2xl max-h-96 overflow-y-auto shadow-lg">
-            <h3 class="text-lg font-bold mb-4 text-blue-300">Organized File Structure Preview</h3>
-            <pre class="text-sm whitespace-pre-wrap bg-gray-900 p-4 rounded text-green-400 font-mono">${data.preview}</pre>
-            <div class="flex justify-end mt-4">
-              <button onclick="this.closest('.fixed').remove()" class="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700">Close</button>
-            </div>
-          </div>
-        `;
-        document.body.appendChild(modal);
-      } else {
-        console.error('Failed to generate preview:', data.error || 'Unknown error');
-      }
-    } catch (error) {
-      console.error('Error generating paths:', error.message);
-    }
-  }
-
   function toggleAudibleDropdown(itemIndex) {
     const dropdown = document.getElementById(`audible-dropdown-${itemIndex}`);
     const arrow = document.getElementById(`dropdown-arrow-${itemIndex}`);
     const isVisible = dropdown.style.display === 'block';
     
-    // Hide all other dropdowns and reset their arrows
     document.querySelectorAll('[id^="audible-dropdown-"]').forEach(d => d.style.display = 'none');
     document.querySelectorAll('[id^="dropdown-arrow-"]').forEach(a => a.style.transform = 'rotate(0deg)');
     
-    // Toggle current dropdown and arrow
     dropdown.style.display = isVisible ? 'none' : 'block';
     if (arrow) {
       arrow.style.transform = isVisible ? 'rotate(0deg)' : 'rotate(180deg)';
@@ -217,8 +173,18 @@ let audioItems = [];
   function calculateRuntimeDelta(originalRuntime, newRuntime) {
     if (!originalRuntime || !newRuntime) return '';
     const delta = newRuntime - originalRuntime;
-    if (Math.abs(delta) <= 1) return ''; // No delta for -1, 0, +1
+    if (Math.abs(delta) <= 1) return '';
     return delta > 0 ? `<span style="color: red;">(+${delta})</span>` : `<span style="color: red;">(${delta})</span>`;
+  }
+
+  function getSelectedSuggestion(item) {
+    if (!item.audible_suggestions || item.audible_suggestions.length === 0) {
+      return null;
+    }
+    
+    const selectedId = item.selected_audible_id || 1;
+    const selectedSuggestion = item.audible_suggestions.find(s => s.id === selectedId);
+    return selectedSuggestion || item.audible_suggestions[0];
   }
 
   function renderAudioCards() {
@@ -245,13 +211,13 @@ let audioItems = [];
       cardDiv.innerHTML = `
         <div class="flex items-center justify-between gap-4">
           <div class="flex-1">
-            ${renderAudioInfo(item.old || {}, item.status, false, null, null)}
+            ${renderAudioInfo(item.original || {}, item.status, false, null, null)}
           </div>
           <div class="arrow text-2xl mx-4 text-gray-500">➡</div>
           <div class="flex-1 relative">
             <div class="flex items-center gap-2">
               <div class="flex-1">
-                ${renderAudioInfo(item.new || {}, item.status, true, item.old, item.audible_suggestions)}
+                ${renderAudioInfo(getSelectedSuggestion(item) || item.original || {}, item.status, true, item.original, item.audible_suggestions)}
               </div>
               ${item.audible_suggestions && item.audible_suggestions.length > 1 ? `
                 <button onclick="toggleAudibleDropdown(${index}); event.stopPropagation();" 
@@ -267,7 +233,7 @@ let audioItems = [];
               <div id="audible-dropdown-${index}" class="absolute top-full left-0 right-0 bg-gray-800 border border-gray-600 rounded-lg shadow-lg z-50 max-h-96 overflow-y-auto" style="display: none;">
                 ${item.audible_suggestions.map((suggestion, suggestionIndex) => `
                   <div onclick="selectAudibleSuggestion(${index}, ${suggestionIndex}); event.stopPropagation();" class="p-3 border-b border-gray-700 hover:bg-gray-700 cursor-pointer ${selectedAudibleData[index] === suggestionIndex ? 'bg-blue-900/50' : ''}">
-                    ${renderAudioInfo(suggestion, item.status, true, item.old, null)}
+                    ${renderAudioInfo(suggestion, item.status, true, item.original, null)}
                   </div>
                 `).join('')}
               </div>
@@ -276,7 +242,7 @@ let audioItems = [];
         </div>
         ${renderButtons(index, item.status)}
         <div id="manual-search-${index}" class="hidden gap-2 items-center mt-2">
-          <input type="text" id="manual-query-${index}" placeholder="Enter search query..." class="flex-1 px-3 py-2 bg-gray-700 text-gray-100 border border-gray-600 rounded focus:border-blue-500 focus:outline-none">
+          <input type="text" id="manual-query-${index}" placeholder="Enter search query..." class="flex-1 px-3 py-2 bg-gray-700 text-gray-100 border border-gray-600 rounded focus:border-blue-500 focus:outline-none" onkeydown="if(event.key==='Enter') executeManualSearch(${index})">
           <button class="px-3 py-2 bg-green-600 text-white rounded flex items-center justify-center hover:bg-green-700" onclick="executeManualSearch(${index})" title="Search">
             <span class="material-icons">search</span>
           </button>
@@ -295,20 +261,15 @@ let audioItems = [];
   }
 
   function renderAudioInfo(info, status, isAudibleCard = false, originalInfo = null, audibleSuggestions = null) {
-    // Handle cover URLs - prefer direct Audible URLs, fallback to backend server for local covers
     let coverSource = '';
     if (info.cover_url) {
-      // Direct Audible URL (starts with https://)
       coverSource = info.cover_url;
     } else if (info.coverImage) {
-      // Local cover file - proxy through backend server
       if (info.coverImage.startsWith('/covers/')) {
         coverSource = `http://localhost:4000${info.coverImage}`;
       } else if (info.coverImage.startsWith('http')) {
-        // Already a full URL
         coverSource = info.coverImage;
       } else {
-        // Assume it's a local path, prepend backend server
         coverSource = `http://localhost:4000/covers/${info.coverImage}`;
       }
     }
@@ -321,17 +282,12 @@ let audioItems = [];
     const series = info.series || '';
     const bookNumber = info.book_number || '';
     const paths = info.paths || [];
-    const audibleId = info.id; // Get the audible suggestion ID
 
-    // Calculate runtime delta for audible cards only
     let runtimeDisplay = runtime ? `Length: ${runtime} min` : '';
     if (isAudibleCard && originalInfo && originalInfo.runtime_length_min && runtime) {
       const delta = calculateRuntimeDelta(originalInfo.runtime_length_min, runtime);
       runtimeDisplay = `Length: ${runtime} min ${delta}`;
     }
-
-    // Add dropdown indicator for audible cards with multiple suggestions
-    const dropdownIndicator = '';
 
     return `
       <div class="flex items-center rounded-lg transition ${
@@ -350,7 +306,6 @@ let audioItems = [];
           </div>
         ` : ''}
         <div class="${status === 'ignored' || status === 'broken' ? 'ml-2 flex flex-col text-sm' : 'ml-6 flex flex-col'} flex-1">
-          ${dropdownIndicator}
           <div class="flex items-center justify-between">
             <p class="font-semibold ${status === 'broken' ? 'text-red-300' : status === 'accepted' ? 'text-blue-300' : 'text-gray-100'}">${title}${subtitle ? `<span class="font-normal"> - ${subtitle}</span>` : ''}</p>
           </div>
@@ -410,7 +365,7 @@ let audioItems = [];
     return '';
   }
 
-  // Make functions available globally for onclick handlers
+  // Make functions available globally
   window.updateStatus = updateStatus;
   window.selectAudibleSuggestion = selectAudibleSuggestion;
   window.toggleAudibleDropdown = toggleAudibleDropdown;
@@ -421,23 +376,31 @@ let audioItems = [];
   window.cancelManualSearch = cancelManualSearch;
   window.executeManualSearch = executeManualSearch;
 
-  // Load data on page load
+  // Load data function
   async function loadData() {
+    console.log('loadData called - fetching from backend...');
     try {
-      const response = await fetch('/api/get-data');
-      const result = await response.json();
+      const response = await fetch('http://localhost:4000/api/audiobooks');
+      console.log('API Response status:', response.status);
       
-      if (result.success && result.data && result.data.items) {
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+      
+      const result = await response.json();
+      console.log('API Response data:', result);
+      
+      if (result.items && Array.isArray(result.items)) {
+        console.log(`Found ${result.items.length} audiobook items`);
+        
         // Transform backend data to match frontend expectations
-        audioItems = result.data.items.map((item, itemIndex) => {
-          // Use the selected audible suggestion if available, otherwise use the first one
+        audioItems = result.items.map((item, itemIndex) => {
           let selectedSuggestion = null;
           let selectedIndex = 0;
           
           if (item.audible_suggestions && item.audible_suggestions.length > 0) {
-            const selectedId = item.selected_audible_id || 1; // Default to ID 1
+            const selectedId = item.selected_audible_id || 1;
             
-            // Find the suggestion with the selected ID
             for (let i = 0; i < item.audible_suggestions.length; i++) {
               if (item.audible_suggestions[i].id === selectedId) {
                 selectedSuggestion = item.audible_suggestions[i];
@@ -446,27 +409,28 @@ let audioItems = [];
               }
             }
             
-            // Fallback to first suggestion if selected ID not found
             if (!selectedSuggestion) {
               selectedSuggestion = item.audible_suggestions[0];
               selectedIndex = 0;
             }
           }
           
-          // Track the selected index for the UI using the correct item index
           if (item.audible_suggestions && item.audible_suggestions.length > 0) {
             selectedAudibleData[itemIndex] = selectedIndex;
           }
           
           return {
-            old: item.original || {},
-            new: selectedSuggestion || item.original || {},
-            original: item.original || {}, // Keep reference to original
+            original: item.original || {},
             audible_suggestions: item.audible_suggestions || [],
             selected_audible_id: item.selected_audible_id || null,
             status: item.status || 'pending'
           };
         });
+        
+        console.log('Transformed audioItems:', audioItems);
+      } else {
+        console.log('No items found in response or items is not an array');
+        audioItems = [];
       }
       
       renderAudioCards();
@@ -474,6 +438,7 @@ let audioItems = [];
       console.error('Failed to load data:', error);
       document.getElementById('loading').style.display = 'none';
       document.getElementById('no-data').style.display = 'block';
+      document.getElementById('audio-cards').style.display = 'none';
     }
   }
 
@@ -485,15 +450,15 @@ let audioItems = [];
 
   // Close dropdowns when clicking outside
   document.addEventListener('click', function(event) {
-    const target = event.target as HTMLElement;
+    const target = event.target;
     if (!target) return;
     
     if (!target.closest('[id^="audible-dropdown-"]') && !target.closest('button[onclick*="toggleAudibleDropdown"]')) {
       document.querySelectorAll('[id^="audible-dropdown-"]').forEach(d => {
-        (d as HTMLElement).style.display = 'none';
+        d.style.display = 'none';
       });
       document.querySelectorAll('[id^="dropdown-arrow-"]').forEach(a => {
-        (a as HTMLElement).style.transform = 'rotate(0deg)';
+        a.style.transform = 'rotate(0deg)';
       });
     }
   });

@@ -34,7 +34,7 @@ covers/
 Each `metadata/<uuid>.json` contains:
 ```json
 {
-  "old": {
+  "original": {
     "uuid": "generated-uuid",
     "title": "Book Title",
     "author": "Author Name",
@@ -46,10 +46,31 @@ Each `metadata/<uuid>.json` contains:
     "asin": "B123456789",
     "paths": ["/relative/path/to/file1.mp3", "/relative/path/to/file2.mp3"]
   },
-  "new": {},
-  "status": "pending"
+  "status": "pending",
+  "audible_suggestions": [
+    {
+      "id": 1,
+      "title": "Enhanced Title",
+      "author": "Enhanced Author",
+      "narrator": "Enhanced Narrator",
+      "series": "Series Name",
+      "book_number": "1",
+      "match_score": 0.95,
+      "match_confidence": "high",
+      "paths": ["/organized/path/file1.mp3"]
+    }
+  ],
+  "selected_audible_id": 1,
+  "audible_last_search": "Auto-enhanced via Audible API"
 }
 ```
+
+**Field Descriptions:**
+- `original`: Original metadata extracted from audio files
+- `status`: Current processing status ("pending", "accepted", "ignored", "broken", "manual")
+- `audible_suggestions`: Array of Audible API enhancement suggestions with sequential IDs
+- `selected_audible_id`: ID of the currently selected suggestion (1-based)
+- `audible_last_search`: Log of the last Audible search performed
 
 ## Coding Guidelines
 
@@ -73,10 +94,77 @@ Each `metadata/<uuid>.json` contains:
 - `walk_audio_files()` - Generator for recursively finding audio files
 - `group_files_by_album()` - Groups audio files by album/artist
 
+### Path Generator (`backend/path_generator.py`)
+The path generator creates standardized file organization structures based on Audible metadata.
+
+**Key Functions:**
+- `generate_paths_for_audiobook(audiobook_data, suggestion_index)` - Main function that generates organized paths
+- `preview_organization(audiobook_data, suggestion_index)` - Creates human-readable preview text
+- `sanitize_filename(text)` - Safely formats text for use in file/folder names
+
+**Organization Format:**
+```
+{Series Title}/{Book Number}-{Book Title} ({Release Year})/
+├── {Book Title}.mp3                          (single file)
+└── {Book Title} [Part XX].mp3               (multi-part)
+```
+
+**Usage Pattern:**
+```python
+from path_generator import generate_paths_for_audiobook, preview_organization
+
+# Generate organized paths
+result = generate_paths_for_audiobook(audiobook_data, selected_suggestion_index)
+if result:
+    organized_paths = result['organized_paths']  # List of new file paths
+    folder_structure = result['folder_structure']  # Metadata about folders
+    original_paths = result['original_paths']  # Reference to source files
+
+# Generate preview text
+preview_text = preview_organization(audiobook_data, selected_suggestion_index)
+```
+
+**Path Generation Result Structure:**
+```python
+{
+    'organized_paths': ['/Series/01-Title (2023)/Title [Part 01].mp3'],
+    'folder_structure': {
+        'series_folder': 'Series Name',
+        'book_folder': '01-Title (2023)',
+        'full_folder_path': 'Series Name/01-Title (2023)',
+        'is_multi_part': True,
+        'part_count': 12
+    },
+    'original_paths': ['/original/path/file1.mp3'],
+    'selected_suggestion': {...},  # The Audible suggestion used
+    'suggestion_index': 0
+}
+```
+
+**Integration Points:**
+- Called by `/api/audiobooks/<uuid>/paths` endpoint for path generation
+- Called by `/api/audiobooks/<uuid>/preview` endpoint for organization preview  
+- Called by manual search to populate `paths` field in suggestions
+- Called by regular Audible enhancement to populate `paths` field in suggestions
+- Uses `selected_audible_id` from metadata to determine which suggestion to use
+
+**Path Integration Requirements:**
+- After fetching from Audible (both manual search and regular enhancement), generated paths should replace the `paths` field in each suggestion
+- The organized paths should be stored in the same `paths` field, not a new data label
+- When displayed in the frontend, organized paths should look identical to original paths (no visual distinction)
+- Original paths remain in the `original` metadata, while Audible suggestions get organized paths in their `paths` field
+
 ### API Endpoints
 - `GET /api/audiobooks` - Paginated audiobook listing with offset/limit
-- `POST /api/audiobooks/:index/status` - Update audiobook status
+- `POST /api/audiobooks/<uuid>/status` - Update audiobook status by UUID
+- `POST /api/audiobooks/<int:index>/status` - Legacy index-based status update
+- `POST /api/audible/<uuid>` - Enhance audiobook with Audible search
+- `POST /api/audiobooks/<uuid>/manual-search` - Manual Audible search with custom query
+- `POST /api/audiobooks/<uuid>/select-audible` - Update selected Audible suggestion
+- `POST /api/audiobooks/<uuid>/paths` - Generate organized file paths
+- `POST /api/audiobooks/<uuid>/preview` - Preview audiobook organization
 - `POST /api/scan` - Manual rescan trigger
+- `POST /api/purge` - Delete all data and regenerate from scratch
 - `GET /covers/:filename` - Serve cover images with proper headers
 
 ### File Paths
