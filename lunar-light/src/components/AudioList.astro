@@ -217,7 +217,7 @@ let audioItems = [];
           <div class="flex-1 relative">
             <div class="flex items-center gap-2">
               <div class="flex-1">
-                ${renderAudioInfo(getSelectedSuggestion(item) || item.original || {}, item.status, true, item.original, item.audible_suggestions)}
+                ${getSelectedSuggestion(item) ? renderAudioInfo(getSelectedSuggestion(item), item.status, true, item.original, item.audible_suggestions) : renderNoAudibleInfo()}
               </div>
               ${item.audible_suggestions && item.audible_suggestions.length > 1 ? `
                 <button onclick="toggleAudibleDropdown(${index}); event.stopPropagation();" 
@@ -325,6 +325,24 @@ let audioItems = [];
           ` : `
             <p class="text-xs text-gray-500 break-all">No file path</p>
           `}
+        </div>
+      </div>
+    `;
+  }
+
+  function renderNoAudibleInfo() {
+    return `
+      <div class="flex items-center rounded-lg transition bg-gray-700 border border-gray-600" style="padding:1rem;">
+        <div class="flex-shrink-0">
+          <div class="w-32 h-32 rounded shadow bg-gray-600 flex items-center justify-center text-xs text-gray-400">
+            No Audible data
+          </div>
+        </div>
+        <div class="ml-6 flex flex-col flex-1">
+          <div class="flex items-center justify-between">
+            <p class="font-semibold text-gray-400">No Audible suggestions available</p>
+          </div>
+          <p class="text-gray-500">Click "Manual Search" to search for Audible data</p>
         </div>
       </div>
     `;
