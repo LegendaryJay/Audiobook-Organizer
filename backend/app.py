@@ -1066,13 +1066,16 @@ def test_series():
         if not title:
             return jsonify({'error': 'Title is required'}), 400
         
+        # Import and create BookSeriesService instance
+        from book_series_service import BookSeriesService
+        series_service = BookSeriesService()
+        
         # Test the series service
-        if hasattr(audible_service, 'series_service') and audible_service.series_service:
-            series_info = audible_service.series_service.find_book_series_info(title, author)
-            return jsonify(series_info)
-        else:
-            return jsonify({'error': 'Series service not available'}), 500
+        series_info = series_service.find_book_series_info(title, author)
+        return jsonify(series_info)
     
+    except ImportError as e:
+        return jsonify({'error': 'BookSeriesService not available', 'details': str(e)}), 500
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 

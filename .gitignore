@@ -5,6 +5,9 @@ lunar-light/public/temp-covers/
 # Ignore data folders with audiobook metadata and covers
 metadata/
 covers/
+
+# Ignore archived/deleted files folder
+delete/
 *.json
 !backend/requirements.txt
 !package*.json
